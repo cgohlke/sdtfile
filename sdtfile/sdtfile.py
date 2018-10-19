@@ -9,19 +9,21 @@
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
-# * Redistributions of source code must retain the above copyright
-#   notice, this list of conditions and the following disclaimer.
-# * Redistributions in binary form must reproduce the above copyright
-#   notice, this list of conditions and the following disclaimer in the
-#   documentation and/or other materials provided with the distribution.
-# * Neither the name of the copyright holders nor the names of any
-#   contributors may be used to endorse or promote products derived
-#   from this software without specific prior written permission.
+# * Redistributions of source code must retain the above copyright notice,
+#   this list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
 # LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
 # CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
 # SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
@@ -32,10 +34,10 @@
 
 """Read Becker & Hickl SDT files.
 
-SDT files are produced by Becker & Hickl SPCM software. They contain time
-correlated single photon counting instrumentation parameters and measurement
-data. Currently only the "Setup & Data", "DLL Data", and "FCS Data" formats
-are supported.
+Sdtfile is a Python library to read SDT files produced by Becker & Hickl
+SPCM software. SDT files contain time correlated single photon counting
+instrumentation parameters and measurement data. Currently only the
+"Setup & Data", "DLL Data", and "FCS Data" formats are supported.
 
 `Becker & Hickl GmbH <http://www.becker-hickl.de/>`_ is a manufacturer of
 equipment for photon counting.
@@ -46,7 +48,7 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:Version: 2018.8.29
+:Version: 2018.10.18
 
 Requirements
 ------------
@@ -55,6 +57,8 @@ Requirements
 
 Revisions
 ---------
+2018.9.22
+    Use str, not bytes for ASCII data.
 2018.8.29
     Move module into sdtfile package.
 2018.2.7
@@ -88,7 +92,7 @@ Read image and metadata from a SPC Setup & Data File:
 >>> sdt.header.revision
 588
 >>> sdt.info.id[1:-1]
-b'SPC Setup & Data File'
+'SPC Setup & Data File'
 >>> int(sdt.measure_info[0].scan_x)
 128
 >>> len(sdt.data)
@@ -112,7 +116,7 @@ Read data from a SPC FCS Data File as numpy array:
 
 >>> sdt = SdtFile('fcs.sdt')
 >>> sdt.info.id[1:-1]
-b'SPC FCS Data File'
+'SPC FCS Data File'
 >>> len(sdt.data)
 1
 >>> sdt.data[0].shape
@@ -124,15 +128,15 @@ b'SPC FCS Data File'
 
 from __future__ import division, print_function
 
+__version__ = '2018.10.18'
+__docformat__ = 'restructuredtext en'
+__all__ = 'SdtFile',
+
 import os
 import sys
 import zipfile
 
 import numpy
-
-__version__ = '2018.8.29'
-__docformat__ = 'restructuredtext en'
-__all__ = 'SdtFile',
 
 
 class SdtFile(object):
@@ -183,11 +187,12 @@ class SdtFile(object):
 
         # read file info
         fh.seek(self.header.info_offset)
-        self.info = FileInfo(fh.read(self.header.info_length))
+        info = bytes2str(fh.read(self.header.info_length)).replace('\r\n', '\n')
+        self.info = FileInfo(info)
         try:
-            if self.info.id not in (b'SPC Setup & Data File',
-                                    b'SPC FCS Data File',
-                                    b'SPC DLL Data File'):
+            if self.info.id not in ('SPC Setup & Data File',
+                                    'SPC FCS Data File',
+                                    'SPC DLL Data File'):
                 raise NotImplementedError(
                     'currently not supported:', self.info.id)
         except AttributeError:
@@ -278,15 +283,16 @@ class FileInfo(str):
     """File info string and attributes."""
     def __init__(self, value):
         str.__init__(self)
-        assert (value.startswith(b'*IDENTIFICATION') and
-                value.strip().endswith(b'*END'))
+        assert (value.startswith('*IDENTIFICATION') and
+                value.strip().endswith('*END'))
+
         for line in value.splitlines()[1:-1]:
             try:
-                key, val = line.split(b':', 1)
+                key, val = line.split(':', 1)
             except Exception:
                 pass
             else:
-                setattr(self, bytes2str(key.strip().lower()), val.strip())
+                setattr(self, key.strip().lower(), val.strip())
 
 
 class SetupBlock(object):
@@ -296,11 +302,11 @@ class SetupBlock(object):
                 value.strip().endswith(b'*END'))
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
-            self.ascii = value[:i]
+            self.ascii = bytes2str(value[:i])
             self.binary = bytes(value[i+15:-10])
             # TODO: parse binary data here
         else:
-            self.ascii = value
+            self.ascii = bytes2str(value)
             self.binary = None
 
     def __str__(self):
@@ -540,19 +546,20 @@ HEADER_VALID = {
     0x5555: True}
 
 INFO_IDS = {
-    b'SPC Setup Script File': 'Setup script mode: setup only',
-    b'SPC Setup & Data File': 'Normal mode: setup + data',
-    b'SPC DLL Data File': 'DLL created: no setup, only data',
-    b'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
-    b'SPC FCS Data File':
-    'FIFO mode: setup, data blocks = Decay, FCS, FIDA, FILDA & MCS '
-    'curves for each used routing channel'}
+    'SPC Setup Script File': 'Setup script mode: setup only',
+    'SPC Setup & Data File': 'Normal mode: setup + data',
+    'SPC DLL Data File': 'DLL created: no setup, only data',
+    'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
+    'SPC FCS Data File': ('FIFO mode: setup, data blocks = '
+                                 'Decay, FCS, FIDA, FILDA & MCS '
+                                 'curves for each used routing channel')
+}
 
 if sys.version_info[0] > 2:
     basestring = str
 
     def bytes2str(x):
-        return str(x, 'ascii')
+        return str(x, 'windows-1250')
 else:
     bytes2str = str
 
