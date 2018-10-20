@@ -1,10 +1,10 @@
 Read Becker & Hickl SDT files
 =============================
 
-SDT files are produced by Becker & Hickl SPCM software. They contain time
-correlated single photon counting instrumentation parameters and measurement
-data. Currently only the "Setup & Data", "DLL Data", and "FCS Data" formats
-are supported.
+Sdtfile is a Python library to read SDT files produced by Becker & Hickl
+SPCM software. SDT files contain time correlated single photon counting
+instrumentation parameters and measurement data. Currently only the
+"Setup & Data", "DLL Data", and "FCS Data" formats are supported.
 
 `Becker & Hickl GmbH <http://www.becker-hickl.de/>`_ is a manufacturer of
 equipment for photon counting.
@@ -15,7 +15,7 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:Version: 2018.8.29
+:Version: 2018.10.18
 
 Requirements
 ------------
@@ -24,6 +24,8 @@ Requirements
 
 Revisions
 ---------
+2018.9.22
+    Use str, not bytes for ASCII data.
 2018.8.29
     Move module into sdtfile package.
 2018.2.7
@@ -57,7 +59,7 @@ Read image and metadata from a SPC Setup & Data File:
 >>> sdt.header.revision
 588
 >>> sdt.info.id[1:-1]
-b'SPC Setup & Data File'
+'SPC Setup & Data File'
 >>> int(sdt.measure_info[0].scan_x)
 128
 >>> len(sdt.data)
@@ -81,7 +83,7 @@ Read data from a SPC FCS Data File as numpy array:
 
 >>> sdt = SdtFile('fcs.sdt')
 >>> sdt.info.id[1:-1]
-b'SPC FCS Data File'
+'SPC FCS Data File'
 >>> len(sdt.data)
 1
 >>> sdt.data[0].shape
