@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # sdtfile.py
 
-# Copyright (c) 2007-2018, Christoph Gohlke
-# Copyright (c) 2007-2018, The Regents of the University of California
+# Copyright (c) 2007-2019, Christoph Gohlke
+# Copyright (c) 2007-2019, The Regents of the University of California
 # Produced at the Laboratory for Fluorescence Dynamics
 # All rights reserved.
 #
@@ -48,7 +48,7 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:Version: 2018.10.18
+:Version: 2019.1.1
 
 Requirements
 ------------
@@ -57,6 +57,8 @@ Requirements
 
 Revisions
 ---------
+2019.1.1
+    Update copyright year.
 2018.9.22
     Use str, not bytes for ASCII data.
 2018.8.29
@@ -128,7 +130,7 @@ Read data from a SPC FCS Data File as numpy array:
 
 from __future__ import division, print_function
 
-__version__ = '2018.10.18'
+__version__ = '2019.1.1'
 __docformat__ = 'restructuredtext en'
 __all__ = 'SdtFile',
 
@@ -187,7 +189,8 @@ class SdtFile(object):
 
         # read file info
         fh.seek(self.header.info_offset)
-        info = bytes2str(fh.read(self.header.info_length)).replace('\r\n', '\n')
+        info = bytes2str(fh.read(self.header.info_length)).replace('\r\n',
+                                                                   '\n')
         self.info = FileInfo(info)
         try:
             if self.info.id not in ('SPC Setup & Data File',
@@ -550,9 +553,9 @@ INFO_IDS = {
     'SPC Setup & Data File': 'Normal mode: setup + data',
     'SPC DLL Data File': 'DLL created: no setup, only data',
     'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
-    'SPC FCS Data File': ('FIFO mode: setup, data blocks = '
-                                 'Decay, FCS, FIDA, FILDA & MCS '
-                                 'curves for each used routing channel')
+    'SPC FCS Data File': (
+        'FIFO mode: setup, data blocks = Decay, FCS, FIDA, FILDA & MCS '
+        'curves for each used routing channel')
 }
 
 if sys.version_info[0] > 2:
