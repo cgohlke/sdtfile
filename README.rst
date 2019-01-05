@@ -15,7 +15,7 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:Version: 2018.10.18
+:Version: 2019.1.1
 
 Requirements
 ------------
@@ -24,6 +24,8 @@ Requirements
 
 Revisions
 ---------
+2019.1.1
+    Update copyright year.
 2018.9.22
     Use str, not bytes for ASCII data.
 2018.8.29
