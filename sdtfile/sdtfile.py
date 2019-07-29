@@ -48,7 +48,9 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:Version: 2019.1.1
+:License: 3-clause BSD
+
+:Version: 2019.7.28
 
 Requirements
 ------------
@@ -57,8 +59,8 @@ Requirements
 
 Revisions
 ---------
-2019.1.1
-    Update copyright year.
+2019.7.28
+    Fix reading compressed, multi-channel data.
 2018.9.22
     Use str, not bytes for ASCII data.
 2018.8.29
@@ -130,11 +132,12 @@ Read data from a SPC FCS Data File as numpy array:
 
 from __future__ import division, print_function
 
-__version__ = '2019.1.1'
+__version__ = '2019.7.28'
 __docformat__ = 'restructuredtext en'
-__all__ = 'SdtFile',
+__all__ = ('SdtFile', )
 
 import os
+import io
 import sys
 import zipfile
 
@@ -240,10 +243,13 @@ class SdtFile(object):
             bt = BlockType(bh.block_type)
             dtype = bt.dtype
             dsize = bh.block_length // dtype.itemsize
+            fh.seek(bh.data_offs)
             if bt.compress:
-                with zipfile.ZipFile(fh) as zf:
+                bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
+                with zipfile.ZipFile(bio) as zf:
                     data = zf.read('data_block')
-                data = numpy.fromstring(data, dtype=dtype, count=dsize)
+                del bio
+                data = numpy.frombuffer(data, dtype=dtype, count=dsize)
             else:
                 data = numpy.fromfile(fh, dtype=dtype, count=dsize)
 
