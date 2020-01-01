@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # sdtfile/setup.py
 
 """Sdtfile package setuptools script."""
@@ -15,8 +14,8 @@ version = re.search(r"__version__ = '(.*?)'", code).groups()[0]
 
 description = re.search(r'"""(.*)\.(?:\r\n|\r|\n)', code).groups()[0]
 
-readme = re.search(r'(?:\r\n|\r|\n){2}"""(.*)"""(?:\r\n|\r|\n){2}from', code,
-                   re.MULTILINE | re.DOTALL).groups()[0]
+readme = re.search(r'(?:\r\n|\r|\n){2}"""(.*)"""(?:\r\n|\r|\n){2}__version__',
+                   code, re.MULTILINE | re.DOTALL).groups()[0]
 
 readme = '\n'.join([description, '=' * len(description)] +
                    readme.splitlines()[1:])
@@ -28,6 +27,7 @@ license = license.replace('# ', '').replace('#', '')
 
 if 'sdist' in sys.argv:
     with open('LICENSE', 'w') as fh:
+        fh.write('BSD 3-Clause License\n\n')
         fh.write(license)
     with open('README.rst', 'w') as fh:
         fh.write(readme)
@@ -42,8 +42,8 @@ setup(
     url='https://www.lfd.uci.edu/~gohlke/',
     license='BSD',
     packages=['sdtfile'],
-    python_requires='>=2.7',
-    install_requires=['numpy>=1.11.3'],
+    python_requires='>=3.6',
+    install_requires=['numpy>=1.14.5'],
     platforms=['any'],
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -51,10 +51,7 @@ setup(
         'Intended Audience :: Science/Research',
         'Intended Audience :: Developers',
         'Operating System :: OS Independent',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3 :: Only',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
