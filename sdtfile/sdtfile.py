@@ -1,24 +1,21 @@
-# -*- coding: utf-8 -*-
 # sdtfile.py
 
-# Copyright (c) 2007-2019, Christoph Gohlke
-# Copyright (c) 2007-2019, The Regents of the University of California
-# Produced at the Laboratory for Fluorescence Dynamics
+# Copyright (c) 2007-2020, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
-# * Redistributions of source code must retain the above copyright notice,
-#   this list of conditions and the following disclaimer.
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
 #
-# * Redistributions in binary form must reproduce the above copyright notice,
-#   this list of conditions and the following disclaimer in the documentation
-#   and/or other materials provided with the distribution.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
 #
-# * Neither the name of the copyright holder nor the names of its
-#   contributors may be used to endorse or promote products derived from
-#   this software without specific prior written permission.
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -48,17 +45,21 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:License: 3-clause BSD
+:License: BSD 3-Clause
 
-:Version: 2019.7.28
+:Version: 2020.1.1
 
 Requirements
 ------------
-* `CPython 2.7 or 3.5+ <https://www.python.org>`_
-* `Numpy 1.13 <https://www.numpy.org>`_
+* `CPython >= 3.6 <https://www.python.org>`_
+* `Numpy 1.14 <https://www.numpy.org>`_
 
 Revisions
 ---------
+2020.1.1
+    Fix reading MCS_BLOCK data.
+    Remove support for Python 2.7 and 3.5.
+    Update copyright.
 2019.7.28
     Fix reading compressed, multi-channel data.
 2018.9.22
@@ -78,19 +79,19 @@ Notes
 -----
 The API is not stable yet and might change between revisions.
 
-Python 2.7 and 3.4 are deprecated.
+This module has been tested with a limited number of files only.
 
 References
 ----------
-(1) W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
-    pp 401.
-(2) SPC_data_file_structure.h header file. Part of the Becker & Hickl
-    SPCM software.
+1. W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
+   pp 401.
+2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
+   SPCM software.
 
 Examples
 --------
 
-Read image and metadata from a SPC Setup & Data File:
+Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
 >>> sdt.header.revision
@@ -106,7 +107,7 @@ Read image and metadata from a SPC Setup & Data File:
 >>> sdt.times[0].shape
 (256,)
 
-Read data and metadata from a SPC Setup & Data File with mutliple data sets:
+Read data and metadata from a "SPC Setup & Data File" with mutliple data sets:
 
 >>> sdt = SdtFile('fluorescein.sdt')
 >>> len(sdt.data)
@@ -116,7 +117,7 @@ Read data and metadata from a SPC Setup & Data File with mutliple data sets:
 >>> sdt.times[3].shape
 (1024,)
 
-Read data from a SPC FCS Data File as numpy array:
+Read image data from a "SPC FCS Data File" as numpy array:
 
 >>> sdt = SdtFile('fcs.sdt')
 >>> sdt.info.id[1:-1]
@@ -130,21 +131,20 @@ Read data from a SPC FCS Data File as numpy array:
 
 """
 
-from __future__ import division, print_function
+__version__ = '2020.1.1'
 
-__version__ = '2019.7.28'
-__docformat__ = 'restructuredtext en'
-__all__ = ('SdtFile', )
+__all__ = (
+    'SdtFile', 'FileInfo', 'SetupBlock', 'BlockNo', 'BlockType', 'FileRevision'
+)
 
 import os
 import io
-import sys
 import zipfile
 
 import numpy
 
 
-class SdtFile(object):
+class SdtFile:
     """Becker & Hickl SDT file.
 
     Attributes
@@ -166,17 +166,16 @@ class SdtFile(object):
         Time axes for each data set.
 
     """
+
     def __init__(self, arg):
         """Initialize instance from file name or open file."""
-        if isinstance(arg, basestring):
-            self.name = os.path.split(arg)[-1]
-            with open(arg, 'rb') as fh:
-                self._fromfile(fh)
-        elif hasattr(arg, 'seek'):
-            self.name = ''
+        if hasattr(arg, 'seek'):
+            self.filename = ''
             self._fromfile(arg)
         else:
-            raise ValueError()
+            self.filename = str(arg)
+            with open(arg, 'rb') as fh:
+                self._fromfile(fh)
 
     def _fromfile(self, fh):
         """Initialize instance from open file."""
@@ -192,17 +191,18 @@ class SdtFile(object):
 
         # read file info
         fh.seek(self.header.info_offset)
-        info = bytes2str(fh.read(self.header.info_length)).replace('\r\n',
-                                                                   '\n')
+        info = fh.read(self.header.info_length).decode('windows-1250')
+        info = info.replace('\r\n', '\n')
         self.info = FileInfo(info)
         try:
-            if self.info.id not in ('SPC Setup & Data File',
-                                    'SPC FCS Data File',
-                                    'SPC DLL Data File'):
-                raise NotImplementedError(
-                    'currently not supported:', self.info.id)
-        except AttributeError:
-            raise ValueError('invalid SDT file info\n', self.info)
+            if self.info.id not in (
+                'SPC Setup & Data File',
+                'SPC FCS Data File',
+                'SPC DLL Data File'
+            ):
+                raise NotImplementedError('not supported:', self.info.id)
+        except AttributeError as exc:
+            raise ValueError('invalid SDT file info\n', self.info) from exc
 
         # read setup block
         if self.header.setup_length:
@@ -253,6 +253,8 @@ class SdtFile(object):
             else:
                 data = numpy.fromfile(fh, dtype=dtype, count=dsize)
 
+            # TODO: support more block types
+            # the following works with DECAY_BLOCK, IMG_BLOCK, and MCS_BLOCK
             adc_re = int(mi.adc_re)
             scan_x = int(mi.scan_x)
             scan_y = int(mi.scan_y)
@@ -262,12 +264,19 @@ class SdtFile(object):
                 data = data.reshape(scan_x, scan_y, adc_re)
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape(image_x, image_y, adc_re)
+            elif dsize == mi.MeasHISTInfo.mcs_points[0]:
+                data = data.reshape(-1, dsize)
             else:
                 data = data.reshape(-1, adc_re)
             self.data.append(data)
-            # generate time axis
-            t = numpy.arange(adc_re, dtype='float64')
-            t *= mi.tac_r / float(mi.tac_g * adc_re)
+
+            if bt.contents == 'MCS_BLOCK':
+                t = numpy.arange(dsize, dtype='float64')
+                t *= mi.MeasHISTInfo.mcs_time[0]
+            else:
+                # generate time axis
+                t = numpy.arange(adc_re, dtype='float64')
+                t *= mi.tac_r / float(mi.tac_g * adc_re)
             self.times.append(t)
             offset = bh.next_block_offs
 
@@ -275,21 +284,36 @@ class SdtFile(object):
         """Return measure_info record for data block."""
         return self.measure_info[self.block_headers[block].meas_desc_block_no]
 
-    def __str__(self):
-        """Return string containing all information about SDT file."""
-        return '\n\n'.join([str(i) for i in (
-            self.name, self.header, self.info, self.measure_info,
-            self.block_headers, self.data[0].shape)])
-
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
+    def __str__(self):
+        """Return string containing all information about SdtFile."""
+        # measure_info = '\n  '.join(str(i) for i in self.measure_info)
+        # block_headers = '\n  '.join(
+        #     indent(i, '  ') for i in self.block_headers)
+        block_types = '\n '.join(
+            indent(BlockType(i.block_type)) for i in self.block_headers)
+        shapes = '\n  '.join(str(i.shape) for i in self.data)
+        return '\n '.join((
+            self.__class__.__name__,
+            os.path.normpath(os.path.normcase(self.filename)),
+            indent(FileRevision(self.header.revision)),
+            indent(self.info.strip()),
+            # f'header: {self.header}',
+            # f'measure_info:\n  {measure_info}',
+            # f'block_headers:\n  {block_headers}',
+            block_types,
+            f'shapes:\n  {shapes}',
+        ))
+
 
 class FileInfo(str):
     """File info string and attributes."""
+
     def __init__(self, value):
         str.__init__(self)
         assert (value.startswith('*IDENTIFICATION') and
@@ -304,66 +328,98 @@ class FileInfo(str):
                 setattr(self, key.strip().lower(), val.strip())
 
 
-class SetupBlock(object):
+class SetupBlock:
     """Setup block ascii and binary data."""
+
+    __slots__ = ('ascii', 'binary')
+
     def __init__(self, value):
         assert (value.startswith(b'*SETUP') and
                 value.strip().endswith(b'*END'))
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
-            self.ascii = bytes2str(value[:i])
+            self.ascii = value[:i].decode('windows-1250')
             self.binary = bytes(value[i+15:-10])
             # TODO: parse binary data here
         else:
-            self.ascii = bytes2str(value)
+            self.ascii = value.decode('windows-1250')
             self.binary = None
 
     def __str__(self):
         return self.ascii
 
 
-class BlockNo(object):
+class BlockNo:
     """The lblock_no field of BLOCK_HEADER."""
+
+    __slots__ = ('data', 'module')
+
     def __init__(self, value):
         self.data = (value & 0xFFFFFF00) >> 24
         self.module = value & 0x000000FF
 
-    def __str__(self):
-        return 'Data number: %s\nModule number: %s' % (self.data, self.module)
-
     def __iter__(self):
         return iter((self.data, self.module))
 
+    def __str__(self):
+        return '\n '.join((
+            self.__class__.__name__,
+            f'data number: {self.data}',
+            f'module number: {self.module}',
+        ))
 
-class BlockType(object):
+
+class BlockType:
     """The block_type field of BLOCK_HEADER."""
+
+    __slots__ = ('mode', 'contents', 'dtype', 'compress')
+
     def __init__(self, value):
         self.mode = BLOCK_CREATION[value & 0xF]
         self.contents = BLOCK_CONTENT[value & 0xF0]
         self.dtype = BLOCK_DTYPE[value & 0xF00]
         self.compress = bool(value & 0x1000)
 
-    def __str__(self):
-        return 'Mode: %s\nContent: %s\nData Type: %s\nCompress: %s' % (
-            self.mode, self.contents, self.dtype, self.compress)
-
     def __iter__(self):
         return iter((self.mode, self.contents, self.dtype))
 
+    def __str__(self):
+        return '\n '.join((
+            self.__class__.__name__,
+            f'mode: {self.mode}',
+            f'contents: {self.contents}',
+            f'dtype: {self.dtype}',
+            f'compress: {self.compress}',
+        ))
 
-class FileRevision(object):
+
+class FileRevision:
     """The revision field of FILE_HEADER."""
+
+    __slots__ = ('revision', 'module')
+
     def __init__(self, value):
         self.revision = value & 0b1111
         self.module = {
-            0x20: 'SPC-130', 0x21: 'SPC-600', 0x22: 'SPC-630',
-            0x23: 'SPC-700', 0x24: 'SPC-730', 0x25: 'SPC-830',
-            0x26: 'SPC-140', 0x27: 'SPC-930', 0x28: 'SPC-150',
-            0x29: 'DPC-230', 0x2a: 'SPC-130EM'
-            }.get((value & 0xff0) >> 4, 'Unknown')
+            0x20: 'SPC-130',
+            0x21: 'SPC-600',
+            0x22: 'SPC-630',
+            0x23: 'SPC-700',
+            0x24: 'SPC-730',
+            0x25: 'SPC-830',
+            0x26: 'SPC-140',
+            0x27: 'SPC-930',
+            0x28: 'SPC-150',
+            0x29: 'DPC-230',
+            0x2a: 'SPC-130EM',
+        }.get((value & 0xff0) >> 4, 'Unknown')
 
     def __str__(self):
-        return 'Revision: %s\nModule type: %s' % (self.revision, self.module)
+        return '\n '.join((
+            self.__class__.__name__,
+            f'revision: {self.revision}',
+            f'module type: {self.module}',
+        ))
 
 
 FILE_HEADER = [
@@ -381,13 +437,15 @@ FILE_HEADER = [
     ('header_valid', 'u2'),
     ('reserved1', 'u4'),
     ('reserved2', 'u2'),
-    ('chksum', 'u2')]
+    ('chksum', 'u2'),
+]
 
 SETUP_BIN_HDR = [
     ('soft_rev', 'u4'),
     ('para_length', 'u4'),
     ('reserved1', 'u4'),
-    ('reserved2', 'u2')]
+    ('reserved2', 'u2'),
+]
 
 # Info collected when measurement finished
 MEASURE_STOP_INFO = [
@@ -406,7 +464,8 @@ MEASURE_STOP_INFO = [
     ('max_tac_rate', 'f4'),
     ('max_adc_rate', 'f4'),
     ('reserved1', 'i4'),
-    ('reserved2', 'f4')]
+    ('reserved2', 'f4'),
+]
 
 # Info collected when FIFO measurement finished
 MEASURE_FCS_INFO = [
@@ -422,7 +481,8 @@ MEASURE_FCS_INFO = [
     ('cross_chan', 'u2'),
     ('mod', 'u2'),
     ('cross_mod', 'u2'),
-    ('cross_mt_resol', 'u4')]
+    ('cross_mt_resol', 'u4'),
+]
 
 # Extension of MeasFCSInfo for other histograms
 HIST_INFO = [
@@ -431,7 +491,8 @@ HIST_INFO = [
     ('fida_points', 'i4'),
     ('filda_points', 'i4'),
     ('mcs_time', 'f4'),
-    ('mcs_points', 'i4')]
+    ('mcs_points', 'i4'),
+]
 
 # Measurement description blocks
 MEASURE_INFO = [
@@ -503,7 +564,8 @@ MEASURE_INFO = [
     ('adc_de', 'i2'),
     ('det', 'i2'),
     ('x_axis', 'i2'),
-    ('MeasHISTInfo', HIST_INFO)]
+    ('MeasHISTInfo', HIST_INFO),
+]
 
 BLOCK_HEADER = [
     ('block_no', 'i2'),
@@ -512,7 +574,8 @@ BLOCK_HEADER = [
     ('block_type', 'u2'),
     ('meas_desc_block_no', 'i2'),
     ('lblock_no', 'u4'),
-    ('block_length', 'u4')]
+    ('block_length', 'u4'),
+]
 
 BLOCK_HEADER_15 = [
     ('data_offs_ext', 'u1'),
@@ -522,7 +585,8 @@ BLOCK_HEADER_15 = [
     ('block_type', 'u2'),
     ('meas_desc_block_no', 'i2'),
     ('lblock_no', 'u4'),
-    ('block_length', 'u4')]
+    ('block_length', 'u4'),
+]
 
 # Mode of creation
 BLOCK_CREATION = {
@@ -533,7 +597,8 @@ BLOCK_CREATION = {
     4: 'CALC_DATA',
     5: 'SIM_DATA',
     8: 'FIFO_DATA',
-    9: 'FIFO_DATA_FROM_FILE'}
+    9: 'FIFO_DATA_FROM_FILE',
+}
 
 BLOCK_CONTENT = {
     0x0: 'DECAY_BLOCK',
@@ -542,17 +607,26 @@ BLOCK_CONTENT = {
     0x30: 'FIDA_BLOCK',
     0x40: 'FILDA_BLOCK',
     0x50: 'MCS_BLOCK',
-    0x60: 'IMG_BLOCK'}
+    0x60: 'IMG_BLOCK',
+    0x70: 'MCSTA_BLOCK',
+    0x80: 'IMG_MCS_BLOCK',
+    0x90: 'MOM_BLOCK',
+    0xa0: 'IMG_INT_BLOCK',
+    0xb0: 'IMG_WF_BLOCK',
+    0xc0: 'IMG_LIFE_BLOCK',
+}
 
 # Data type
 BLOCK_DTYPE = {
     0x000: numpy.dtype('<u2'),
     0x100: numpy.dtype('<u4'),
-    0x200: numpy.dtype('<f8')}
+    0x200: numpy.dtype('<f8'),
+}
 
 HEADER_VALID = {
     0x1111: False,
-    0x5555: True}
+    0x5555: True,
+}
 
 INFO_IDS = {
     'SPC Setup Script File': 'Setup script mode: setup only',
@@ -561,17 +635,16 @@ INFO_IDS = {
     'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
     'SPC FCS Data File': (
         'FIFO mode: setup, data blocks = Decay, FCS, FIDA, FILDA & MCS '
-        'curves for each used routing channel')
+        'curves for each used routing channel'),
 }
 
-if sys.version_info[0] > 2:
-    basestring = str
 
-    def bytes2str(x):
-        return str(x, 'windows-1250')
-else:
-    bytes2str = str
+def indent(string, pad=' '):
+    """Return string with all but first line indented."""
+    return f'\n{pad}'.join(str(string).splitlines())
+
 
 if __name__ == '__main__':
     import doctest
+
     doctest.testmod()
