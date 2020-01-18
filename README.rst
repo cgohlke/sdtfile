@@ -15,17 +15,21 @@ equipment for photon counting.
 :Organization:
   Laboratory for Fluorescence Dynamics. University of California, Irvine
 
-:License: 3-clause BSD
+:License: BSD 3-Clause
 
-:Version: 2019.7.28
+:Version: 2020.1.1
 
 Requirements
 ------------
-* `CPython 2.7 or 3.5+ <https://www.python.org>`_
-* `Numpy 1.13 <https://www.numpy.org>`_
+* `CPython >= 3.6 <https://www.python.org>`_
+* `Numpy 1.14 <https://www.numpy.org>`_
 
 Revisions
 ---------
+2020.1.1
+    Fix reading MCS_BLOCK data.
+    Remove support for Python 2.7 and 3.5.
+    Update copyright.
 2019.7.28
     Fix reading compressed, multi-channel data.
 2018.9.22
@@ -45,19 +49,19 @@ Notes
 -----
 The API is not stable yet and might change between revisions.
 
-Python 2.7 and 3.4 are deprecated.
+This module has been tested with a limited number of files only.
 
 References
 ----------
-(1) W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
-    pp 401.
-(2) SPC_data_file_structure.h header file. Part of the Becker & Hickl
-    SPCM software.
+1. W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
+   pp 401.
+2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
+   SPCM software.
 
 Examples
 --------
 
-Read image and metadata from a SPC Setup & Data File:
+Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
 >>> sdt.header.revision
@@ -73,7 +77,7 @@ Read image and metadata from a SPC Setup & Data File:
 >>> sdt.times[0].shape
 (256,)
 
-Read data and metadata from a SPC Setup & Data File with mutliple data sets:
+Read data and metadata from a "SPC Setup & Data File" with mutliple data sets:
 
 >>> sdt = SdtFile('fluorescein.sdt')
 >>> len(sdt.data)
@@ -83,7 +87,7 @@ Read data and metadata from a SPC Setup & Data File with mutliple data sets:
 >>> sdt.times[3].shape
 (1024,)
 
-Read data from a SPC FCS Data File as numpy array:
+Read image data from a "SPC FCS Data File" as numpy array:
 
 >>> sdt = SdtFile('fcs.sdt')
 >>> sdt.info.id[1:-1]
