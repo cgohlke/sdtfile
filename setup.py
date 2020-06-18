@@ -40,10 +40,15 @@ setup(
     author='Christoph Gohlke',
     author_email='cgohlke@uci.edu',
     url='https://www.lfd.uci.edu/~gohlke/',
+    project_urls={
+        'Bug Tracker': 'https://github.com/cgohlke/sdtfile/issues',
+        'Source Code': 'https://github.com/cgohlke/sdtfile',
+        # 'Documentation': 'https://',
+    },
     license='BSD',
     packages=['sdtfile'],
     python_requires='>=3.6',
-    install_requires=['numpy>=1.14.5'],
+    install_requires=['numpy>=1.15.1'],
     platforms=['any'],
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -52,8 +57,8 @@ setup(
         'Intended Audience :: Developers',
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
     ],
 )
