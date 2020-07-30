@@ -56,4 +56,8 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
     ],
+    project_urls={
+        'Source': 'https://github.com/cgohlke/sdtfile',
+        'Tracker': 'https://github.com/cgohlke/sdtfile/issues',
+    },
 )
