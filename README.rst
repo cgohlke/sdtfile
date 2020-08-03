@@ -17,15 +17,18 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.1.1
+:Version: 2020.8.3
 
 Requirements
 ------------
-* `CPython >= 3.6 <https://www.python.org>`_
-* `Numpy 1.14 <https://www.numpy.org>`_
+* `CPython >= 3.7 <https://www.python.org>`_
+* `Numpy 1.15 <https://www.numpy.org>`_
 
 Revisions
 ---------
+2020.8.3
+    Fix integer overflow (#3).
+    Support os.PathLike file names.
 2020.1.1
     Fix reading MCS_BLOCK data.
     Remove support for Python 2.7 and 3.5.
