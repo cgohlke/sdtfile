@@ -47,15 +47,18 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.1.1
+:Version: 2020.8.3
 
 Requirements
 ------------
-* `CPython >= 3.6 <https://www.python.org>`_
-* `Numpy 1.14 <https://www.numpy.org>`_
+* `CPython >= 3.7 <https://www.python.org>`_
+* `Numpy 1.15 <https://www.numpy.org>`_
 
 Revisions
 ---------
+2020.8.3
+    Fix integer overflow (#3).
+    Support os.PathLike file names.
 2020.1.1
     Fix reading MCS_BLOCK data.
     Remove support for Python 2.7 and 3.5.
@@ -131,7 +134,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 """
 
-__version__ = '2020.1.1'
+__version__ = '2020.8.3'
 
 __all__ = (
     'SdtFile', 'FileInfo', 'SetupBlock', 'BlockNo', 'BlockType', 'FileRevision'
@@ -173,7 +176,7 @@ class SdtFile:
             self.filename = ''
             self._fromfile(arg)
         else:
-            self.filename = str(arg)
+            self.filename = os.fspath(arg)
             with open(arg, 'rb') as fh:
                 self._fromfile(fh)
 
@@ -271,12 +274,12 @@ class SdtFile:
             self.data.append(data)
 
             if bt.contents == 'MCS_BLOCK':
-                t = numpy.arange(dsize, dtype='float64')
+                t = numpy.arange(dsize, dtype=numpy.float64)
                 t *= mi.MeasHISTInfo.mcs_time[0]
             else:
                 # generate time axis
-                t = numpy.arange(adc_re, dtype='float64')
-                t *= mi.tac_r / float(mi.tac_g * adc_re)
+                t = numpy.arange(adc_re, dtype=numpy.float64)
+                t *= mi.tac_r / (float(mi.tac_g) * adc_re)
             self.times.append(t)
             offset = bh.next_block_offs
 
