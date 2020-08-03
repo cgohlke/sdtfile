@@ -276,7 +276,7 @@ class SdtFile:
             else:
                 # generate time axis
                 t = numpy.arange(adc_re, dtype='float64')
-                t *= mi.tac_r / float(mi.tac_g * adc_re)
+                t *= mi.tac_r / (float(mi.tac_g) * adc_re)
             self.times.append(t)
             offset = bh.next_block_offs
 
