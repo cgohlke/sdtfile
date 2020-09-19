@@ -14,14 +14,21 @@ version = re.search(r"__version__ = '(.*?)'", code).groups()[0]
 
 description = re.search(r'"""(.*)\.(?:\r\n|\r|\n)', code).groups()[0]
 
-readme = re.search(r'(?:\r\n|\r|\n){2}"""(.*)"""(?:\r\n|\r|\n){2}__version__',
-                   code, re.MULTILINE | re.DOTALL).groups()[0]
+readme = re.search(
+    r'(?:\r\n|\r|\n){2}"""(.*)"""(?:\r\n|\r|\n){2}__version__',
+    code,
+    re.MULTILINE | re.DOTALL,
+).groups()[0]
 
-readme = '\n'.join([description, '=' * len(description)] +
-                   readme.splitlines()[1:])
+readme = '\n'.join(
+    [description, '=' * len(description)] + readme.splitlines()[1:]
+)
 
-license = re.search(r'(# Copyright.*?(?:\r\n|\r|\n))(?:\r\n|\r|\n)+""', code,
-                    re.MULTILINE | re.DOTALL).groups()[0]
+license = re.search(
+    r'(# Copyright.*?(?:\r\n|\r|\n))(?:\r\n|\r|\n)+""',
+    code,
+    re.MULTILINE | re.DOTALL,
+).groups()[0]
 
 license = license.replace('# ', '').replace('#', '')
 
@@ -47,7 +54,7 @@ setup(
     },
     license='BSD',
     packages=['sdtfile'],
-    python_requires='>=3.6',
+    python_requires='>=3.7',
     install_requires=['numpy>=1.15.1'],
     platforms=['any'],
     classifiers=[
