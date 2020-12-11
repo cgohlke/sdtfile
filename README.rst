@@ -17,7 +17,7 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.8.3
+:Version: 2020.12.10
 
 Requirements
 ------------
@@ -26,6 +26,8 @@ Requirements
 
 Revisions
 ---------
+2020.12.10
+    Fix shape of non-square frames.
 2020.8.3
     Fix integer overflow (#3).
     Support os.PathLike file names.
@@ -46,7 +48,7 @@ Revisions
 2015.1.29
     Read SPC DLL data files.
 2014.9.5
-    Fixed reading multiple MEASURE_INFO records.
+    Fix reading multiple MEASURE_INFO records.
 
 Notes
 -----
