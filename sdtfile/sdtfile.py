@@ -47,7 +47,7 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.8.3
+:Version: 2020.12.10
 
 Requirements
 ------------
@@ -56,6 +56,8 @@ Requirements
 
 Revisions
 ---------
+2020.12.10
+    Fix shape of non-square frames.
 2020.8.3
     Fix integer overflow (#3).
     Support os.PathLike file names.
@@ -76,7 +78,7 @@ Revisions
 2015.1.29
     Read SPC DLL data files.
 2014.9.5
-    Fixed reading multiple MEASURE_INFO records.
+    Fix reading multiple MEASURE_INFO records.
 
 Notes
 -----
@@ -134,10 +136,15 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 """
 
-__version__ = '2020.8.3'
+__version__ = '2020.12.10'
 
 __all__ = (
-    'SdtFile', 'FileInfo', 'SetupBlock', 'BlockNo', 'BlockType', 'FileRevision'
+    'SdtFile',
+    'FileInfo',
+    'SetupBlock',
+    'BlockNo',
+    'BlockType',
+    'FileRevision',
 )
 
 import os
@@ -183,13 +190,14 @@ class SdtFile:
     def _fromfile(self, fh):
         """Initialize instance from open file."""
         # read file header
-        self.header = numpy.rec.fromfile(fh, dtype=FILE_HEADER,
-                                         shape=1, byteorder='<')[0]
+        self.header = numpy.rec.fromfile(
+            fh, dtype=FILE_HEADER, shape=1, byteorder='<'
+        )[0]
         if self.header.header_valid != 0x5555:
             raise ValueError('not a SDT file')
-        if self.header.no_of_data_blocks == 0x7fff:
+        if self.header.no_of_data_blocks == 0x7FFF:
             self.header.no_of_data_blocks = self.header.reserved1
-        elif self.header.no_of_data_blocks > 0x7fff:
+        elif self.header.no_of_data_blocks > 0x7FFF:
             raise ValueError('')
 
         # read file info
@@ -201,7 +209,7 @@ class SdtFile:
             if self.info.id not in (
                 'SPC Setup & Data File',
                 'SPC FCS Data File',
-                'SPC DLL Data File'
+                'SPC DLL Data File',
             ):
                 raise NotImplementedError('not supported:', self.info.id)
         except AttributeError as exc:
@@ -224,7 +232,8 @@ class SdtFile:
         fh.seek(self.header.meas_desc_block_offset)
         for _ in range(self.header.no_of_meas_desc_blocks):
             self.measure_info.append(
-                numpy.rec.fromfile(fh, dtype=dtype, shape=1, byteorder='<'))
+                numpy.rec.fromfile(fh, dtype=dtype, shape=1, byteorder='<')
+            )
             fh.seek(self.header.meas_desc_block_length - dtype.itemsize, 1)
 
         rev = FileRevision(self.header.revision)
@@ -238,8 +247,9 @@ class SdtFile:
         for _ in range(self.header.no_of_data_blocks):
             # read data block header
             fh.seek(offset)
-            bh = numpy.rec.fromfile(fh, dtype=block_header_t,
-                                    shape=1, byteorder='<')[0]
+            bh = numpy.rec.fromfile(
+                fh, dtype=block_header_t, shape=1, byteorder='<'
+            )[0]
             self.block_headers.append(bh)
             # read data block
             mi = self.measure_info[bh.meas_desc_block_no]
@@ -264,9 +274,9 @@ class SdtFile:
             image_x = int(mi.image_x)
             image_y = int(mi.image_y)
             if dsize == scan_x * scan_y * adc_re:
-                data = data.reshape(scan_x, scan_y, adc_re)
+                data = data.reshape(scan_y, scan_x, adc_re)
             elif dsize == image_x * image_y * adc_re:
-                data = data.reshape(image_x, image_y, adc_re)
+                data = data.reshape(image_y, image_x, adc_re)
             elif dsize == mi.MeasHISTInfo.mcs_points[0]:
                 data = data.reshape(-1, dsize)
             else:
@@ -299,19 +309,22 @@ class SdtFile:
         # block_headers = '\n  '.join(
         #     indent(i, '  ') for i in self.block_headers)
         block_types = '\n '.join(
-            indent(BlockType(i.block_type)) for i in self.block_headers)
+            indent(BlockType(i.block_type)) for i in self.block_headers
+        )
         shapes = '\n  '.join(str(i.shape) for i in self.data)
-        return '\n '.join((
-            self.__class__.__name__,
-            os.path.normpath(os.path.normcase(self.filename)),
-            indent(FileRevision(self.header.revision)),
-            indent(self.info.strip()),
-            # f'header: {self.header}',
-            # f'measure_info:\n  {measure_info}',
-            # f'block_headers:\n  {block_headers}',
-            block_types,
-            f'shapes:\n  {shapes}',
-        ))
+        return '\n '.join(
+            (
+                self.__class__.__name__,
+                os.path.normpath(os.path.normcase(self.filename)),
+                indent(FileRevision(self.header.revision)),
+                indent(self.info.strip()),
+                # f'header: {self.header}',
+                # f'measure_info:\n  {measure_info}',
+                # f'block_headers:\n  {block_headers}',
+                block_types,
+                f'shapes:\n  {shapes}',
+            )
+        )
 
 
 class FileInfo(str):
@@ -319,8 +332,9 @@ class FileInfo(str):
 
     def __init__(self, value):
         str.__init__(self)
-        assert (value.startswith('*IDENTIFICATION') and
-                value.strip().endswith('*END'))
+        assert value.startswith('*IDENTIFICATION') and value.strip().endswith(
+            '*END'
+        )
 
         for line in value.splitlines()[1:-1]:
             try:
@@ -337,12 +351,11 @@ class SetupBlock:
     __slots__ = ('ascii', 'binary')
 
     def __init__(self, value):
-        assert (value.startswith(b'*SETUP') and
-                value.strip().endswith(b'*END'))
+        assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
             self.ascii = value[:i].decode('windows-1250')
-            self.binary = bytes(value[i+15:-10])
+            self.binary = bytes(value[i + 15 : -10])
             # TODO: parse binary data here
         else:
             self.ascii = value.decode('windows-1250')
@@ -365,11 +378,13 @@ class BlockNo:
         return iter((self.data, self.module))
 
     def __str__(self):
-        return '\n '.join((
-            self.__class__.__name__,
-            f'data number: {self.data}',
-            f'module number: {self.module}',
-        ))
+        return '\n '.join(
+            (
+                self.__class__.__name__,
+                f'data number: {self.data}',
+                f'module number: {self.module}',
+            )
+        )
 
 
 class BlockType:
@@ -387,13 +402,15 @@ class BlockType:
         return iter((self.mode, self.contents, self.dtype))
 
     def __str__(self):
-        return '\n '.join((
-            self.__class__.__name__,
-            f'mode: {self.mode}',
-            f'contents: {self.contents}',
-            f'dtype: {self.dtype}',
-            f'compress: {self.compress}',
-        ))
+        return '\n '.join(
+            (
+                self.__class__.__name__,
+                f'mode: {self.mode}',
+                f'contents: {self.contents}',
+                f'dtype: {self.dtype}',
+                f'compress: {self.compress}',
+            )
+        )
 
 
 class FileRevision:
@@ -414,15 +431,17 @@ class FileRevision:
             0x27: 'SPC-930',
             0x28: 'SPC-150',
             0x29: 'DPC-230',
-            0x2a: 'SPC-130EM',
-        }.get((value & 0xff0) >> 4, 'Unknown')
+            0x2A: 'SPC-130EM',
+        }.get((value & 0xFF0) >> 4, 'Unknown')
 
     def __str__(self):
-        return '\n '.join((
-            self.__class__.__name__,
-            f'revision: {self.revision}',
-            f'module type: {self.module}',
-        ))
+        return '\n '.join(
+            (
+                self.__class__.__name__,
+                f'revision: {self.revision}',
+                f'module type: {self.module}',
+            )
+        )
 
 
 FILE_HEADER = [
@@ -614,9 +633,9 @@ BLOCK_CONTENT = {
     0x70: 'MCSTA_BLOCK',
     0x80: 'IMG_MCS_BLOCK',
     0x90: 'MOM_BLOCK',
-    0xa0: 'IMG_INT_BLOCK',
-    0xb0: 'IMG_WF_BLOCK',
-    0xc0: 'IMG_LIFE_BLOCK',
+    0xA0: 'IMG_INT_BLOCK',
+    0xB0: 'IMG_WF_BLOCK',
+    0xC0: 'IMG_LIFE_BLOCK',
 }
 
 # Data type
@@ -626,10 +645,7 @@ BLOCK_DTYPE = {
     0x200: numpy.dtype('<f8'),
 }
 
-HEADER_VALID = {
-    0x1111: False,
-    0x5555: True,
-}
+HEADER_VALID = {0x1111: False, 0x5555: True}
 
 INFO_IDS = {
     'SPC Setup Script File': 'Setup script mode: setup only',
@@ -638,7 +654,8 @@ INFO_IDS = {
     'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
     'SPC FCS Data File': (
         'FIFO mode: setup, data blocks = Decay, FCS, FIDA, FILDA & MCS '
-        'curves for each used routing channel'),
+        'curves for each used routing channel'
+    ),
 }
 
 
