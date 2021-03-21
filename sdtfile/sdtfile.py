@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2020, Christoph Gohlke
+# Copyright (c) 2007-2021, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -47,7 +47,7 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.12.10
+:Version: 2021.3.21
 
 Requirements
 ------------
@@ -56,6 +56,8 @@ Requirements
 
 Revisions
 ---------
+2021.3.21
+    Add sdt2dat script.
 2020.12.10
     Fix shape of non-square frames.
 2020.8.3
@@ -95,7 +97,6 @@ References
 
 Examples
 --------
-
 Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
@@ -136,7 +137,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 """
 
-__version__ = '2020.12.10'
+__version__ = '2021.3.21'
 
 __all__ = (
     'SdtFile',
