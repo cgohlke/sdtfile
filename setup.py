@@ -52,6 +52,7 @@ setup(
         'Source Code': 'https://github.com/cgohlke/sdtfile',
         # 'Documentation': 'https://',
     },
+    entry_points={'console_scripts': ['sdt2dat = sdtfile.sdt2dat:main']},
     license='BSD',
     packages=['sdtfile'],
     python_requires='>=3.7',
