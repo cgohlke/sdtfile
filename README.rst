@@ -17,7 +17,7 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2020.12.10
+:Version: 2021.3.21
 
 Requirements
 ------------
@@ -26,6 +26,8 @@ Requirements
 
 Revisions
 ---------
+2021.3.21
+    Add sdt2dat script.
 2020.12.10
     Fix shape of non-square frames.
 2020.8.3
@@ -65,7 +67,6 @@ References
 
 Examples
 --------
-
 Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
