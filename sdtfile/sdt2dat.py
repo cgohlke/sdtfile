@@ -44,18 +44,18 @@ and saves the decay curves in Globals for Spectroscopy DAT format.
 
 :License: BSD 3-Clause
 
-:Version: 2021.3.21
+:Version: 2021.11.18
 
 For command line usage run ``python -m sdtfile.sdt2dat --help``
 
 For example, to analyze the decay curve in `file.sdt` using a reference decay
-in `reference.sdt` with lifetime 4.0 ns, after subtreacting a background of
+in `reference.sdt` with lifetime 4.0 ns, after subtracting a background of
 100 and extracting data in range 500 to 3900:
 
   ``sdt2dat -r reference.sdt -l 4.0 -b 100 -s 500 3900 file.sdt``
 
-The decay curves will be saved to `file.sdt.dat`. Phasor coordinates will be
-saved to `sdtphasor.tsv`.
+The decay curves are saved to `file.sdt.dat`. Phasor coordinates are saved
+to `sdtphasor.tsv`.
 
 This script depends on Python >= 3.7 and the matplotlib, numpy, and click
 libraries, which can be installed with:
@@ -64,7 +64,7 @@ libraries, which can be installed with:
 
 """
 
-__version__ = '2021.3.21'
+__version__ = '2021.11.18'
 
 import os
 import sys
