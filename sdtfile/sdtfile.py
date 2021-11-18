@@ -47,15 +47,17 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2021.3.21
+:Version: 2021.11.18
 
 Requirements
 ------------
 * `CPython >= 3.7 <https://www.python.org>`_
-* `Numpy 1.15 <https://www.numpy.org>`_
+* `Numpy 1.19 <https://www.numpy.org>`_
 
 Revisions
 ---------
+2021.11.18
+    Fix reading FLIM files created by Prairie View software (#5).
 2021.3.21
     Add sdt2dat script.
 2020.12.10
@@ -137,7 +139,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 """
 
-__version__ = '2021.3.21'
+__version__ = '2021.11.18'
 
 __all__ = (
     'SdtFile',
@@ -261,7 +263,7 @@ class SdtFile:
             if bt.compress:
                 bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
                 with zipfile.ZipFile(bio) as zf:
-                    data = zf.read('data_block')
+                    data = zf.read(zf.filelist[0].filename)  # 'data_block'
                 del bio
                 data = numpy.frombuffer(data, dtype=dtype, count=dsize)
             else:
