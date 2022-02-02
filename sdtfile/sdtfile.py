@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2021, Christoph Gohlke
+# Copyright (c) 2007-2022, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -47,15 +47,21 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2021.11.18
+:Version: 2022.2.2
 
 Requirements
 ------------
-* `CPython >= 3.7 <https://www.python.org>`_
-* `Numpy 1.19 <https://www.numpy.org>`_
+This release has been tested with the following requirements and dependencies
+(other versions may work):
+
+* `CPython 3.8.10, 3.9.10, 3.10.2 64-bit <https://www.python.org>`_
+* `Numpy 1.21.5 <https://pypi.org/project/numpy/>`_
 
 Revisions
 ---------
+2022.2.2
+    Add type hints.
+    Drop support for Python 3.7 and numpy < 1.19 (NEP29).
 2021.11.18
     Fix reading FLIM files created by Prairie View software (#5).
 2021.3.21
@@ -139,20 +145,23 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 """
 
-__version__ = '2021.11.18'
+from __future__ import annotations
 
-__all__ = (
+__version__ = '2022.2.2'
+
+__all__ = [
     'SdtFile',
     'FileInfo',
     'SetupBlock',
     'BlockNo',
     'BlockType',
     'FileRevision',
-)
+]
 
 import os
 import io
 import zipfile
+from typing import BinaryIO
 
 import numpy
 
@@ -169,7 +178,7 @@ class SdtFile:
         General information in ASCII format.
     setup : SetupBlock or None
         Setup block containing all system parameters, display parameters, etc.
-    measure_info : numpy.rec.array of MEASURE_INFO structure
+    measure_info : list of numpy.rec.array of MEASURE_INFO structure
         Measurement description blocks.
     block_headers : list of numpy.rec.array of BLOCK_HEADER structure
         Data block headers.
@@ -180,17 +189,27 @@ class SdtFile:
 
     """
 
-    def __init__(self, arg):
+    filename: str
+    header: numpy.recarray
+    info: FileInfo
+    setup: SetupBlock | None
+    measure_info: list[numpy.recarray]
+    block_headers: list[numpy.recarray]
+    data: list[numpy.ndarray]
+    times: list[numpy.ndarray]
+
+    def __init__(self, arg: str | os.PathLike | BinaryIO) -> None:
         """Initialize instance from file name or open file."""
-        if hasattr(arg, 'seek'):
-            self.filename = ''
-            self._fromfile(arg)
-        else:
+        if isinstance(arg, (str, os.PathLike)):
             self.filename = os.fspath(arg)
             with open(arg, 'rb') as fh:
                 self._fromfile(fh)
+        else:
+            assert hasattr(arg, 'seek')
+            self.filename = ''
+            self._fromfile(arg)
 
-    def _fromfile(self, fh):
+    def _fromfile(self, fh: BinaryIO) -> None:
         """Initialize instance from open file."""
         # read file header
         self.header = numpy.rec.fromfile(
@@ -213,8 +232,9 @@ class SdtFile:
                 'SPC Setup & Data File',
                 'SPC FCS Data File',
                 'SPC DLL Data File',
+                'SPC Setup & Data File',  # corrupted?
             ):
-                raise NotImplementedError('not supported:', self.info.id)
+                raise NotImplementedError(f'{self.info.id!r} not supported')
         except AttributeError as exc:
             raise ValueError('invalid SDT file info\n', self.info) from exc
 
@@ -263,9 +283,9 @@ class SdtFile:
             if bt.compress:
                 bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
                 with zipfile.ZipFile(bio) as zf:
-                    data = zf.read(zf.filelist[0].filename)  # 'data_block'
+                    databytes = zf.read(zf.filelist[0].filename)  # data_block
                 del bio
-                data = numpy.frombuffer(data, dtype=dtype, count=dsize)
+                data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
                 data = numpy.fromfile(fh, dtype=dtype, count=dsize)
 
@@ -296,44 +316,44 @@ class SdtFile:
             self.times.append(t)
             offset = bh.next_block_offs
 
-    def block_measure_info(self, block):
+    def block_measure_info(self, block: int) -> numpy.recarray:
         """Return measure_info record for data block."""
         return self.measure_info[self.block_headers[block].meas_desc_block_no]
 
-    def __enter__(self):
+    def __enter__(self) -> SdtFile:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
-    def __str__(self):
+    def __repr__(self) -> str:
+        filename = os.path.split(self.filename)[-1]
+        return f'<{self.__class__.__name__} {filename!r}>'
+
+    def __str__(self) -> str:
         """Return string containing all information about SdtFile."""
-        # measure_info = '\n  '.join(str(i) for i in self.measure_info)
-        # block_headers = '\n  '.join(
-        #     indent(i, '  ') for i in self.block_headers)
-        block_types = '\n '.join(
-            indent(BlockType(i.block_type)) for i in self.block_headers
-        )
-        shapes = '\n  '.join(str(i.shape) for i in self.data)
-        return '\n '.join(
-            (
-                self.__class__.__name__,
-                os.path.normpath(os.path.normcase(self.filename)),
-                indent(FileRevision(self.header.revision)),
-                indent(self.info.strip()),
-                # f'header: {self.header}',
-                # f'measure_info:\n  {measure_info}',
-                # f'block_headers:\n  {block_headers}',
-                block_types,
-                f'shapes:\n  {shapes}',
-            )
+        return indent(
+            repr(self),
+            # os.path.normpath(os.path.normcase(self.filename)),
+            FileRevision(self.header.revision),
+            indent('info:', self.info.strip()),
+            # indent('header:', self.header),
+            # indent('measure_info:', *self.measure_info),
+            # indent('block_headers:', *self.block_headers),
+            indent(
+                'blocktypes:',
+                *(BlockType(i.block_type) for i in self.block_headers),
+            ),
+            indent('shapes:', *(i.shape for i in self.data)),
         )
 
 
 class FileInfo(str):
     """File info string and attributes."""
 
-    def __init__(self, value):
+    id: str
+
+    def __init__(self, value: str) -> None:
         str.__init__(self)
         assert value.startswith('*IDENTIFICATION') and value.strip().endswith(
             '*END'
@@ -353,7 +373,10 @@ class SetupBlock:
 
     __slots__ = ('ascii', 'binary')
 
-    def __init__(self, value):
+    ascii: str
+    binary: bytes | None
+
+    def __init__(self, value: bytes) -> None:
         assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
@@ -364,7 +387,7 @@ class SetupBlock:
             self.ascii = value.decode('windows-1250')
             self.binary = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.ascii
 
 
@@ -373,21 +396,15 @@ class BlockNo:
 
     __slots__ = ('data', 'module')
 
-    def __init__(self, value):
+    data: int
+    module: int
+
+    def __init__(self, value: int) -> None:
         self.data = (value & 0xFFFFFF00) >> 24
         self.module = value & 0x000000FF
 
-    def __iter__(self):
-        return iter((self.data, self.module))
-
-    def __str__(self):
-        return '\n '.join(
-            (
-                self.__class__.__name__,
-                f'data number: {self.data}',
-                f'module number: {self.module}',
-            )
-        )
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__} {self.data} {self.module}>'
 
 
 class BlockType:
@@ -395,24 +412,27 @@ class BlockType:
 
     __slots__ = ('mode', 'contents', 'dtype', 'compress')
 
-    def __init__(self, value):
+    mode: str
+    contents: str
+    dtype: numpy.dtype
+    compress: bool
+
+    def __init__(self, value: int) -> None:
         self.mode = BLOCK_CREATION[value & 0xF]
         self.contents = BLOCK_CONTENT[value & 0xF0]
         self.dtype = BLOCK_DTYPE[value & 0xF00]
         self.compress = bool(value & 0x1000)
 
-    def __iter__(self):
-        return iter((self.mode, self.contents, self.dtype))
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__} {self.mode} {self.contents}>'
 
-    def __str__(self):
-        return '\n '.join(
-            (
-                self.__class__.__name__,
-                f'mode: {self.mode}',
-                f'contents: {self.contents}',
-                f'dtype: {self.dtype}',
-                f'compress: {self.compress}',
-            )
+    def __str__(self) -> str:
+        return indent(
+            repr(self),
+            # f'mode: {self.mode}',
+            # f'contents: {self.contents}',
+            f'dtype: {self.dtype}',
+            f'compress: {self.compress}',
         )
 
 
@@ -421,7 +441,10 @@ class FileRevision:
 
     __slots__ = ('revision', 'module')
 
-    def __init__(self, value):
+    revision: int
+    module: str
+
+    def __init__(self, value: int) -> None:
         self.revision = value & 0b1111
         self.module = {
             0x20: 'SPC-130',
@@ -437,17 +460,13 @@ class FileRevision:
             0x2A: 'SPC-130EM',
         }.get((value & 0xFF0) >> 4, 'Unknown')
 
-    def __str__(self):
-        return '\n '.join(
-            (
-                self.__class__.__name__,
-                f'revision: {self.revision}',
-                f'module type: {self.module}',
-            )
+    def __repr__(self) -> str:
+        return (
+            f'<{self.__class__.__name__} {self.module!r} rev {self.revision}>'
         )
 
 
-FILE_HEADER = [
+FILE_HEADER: list[tuple[str, str]] = [
     ('revision', 'i2'),
     ('info_offset', 'i4'),
     ('info_length', 'i2'),
@@ -465,7 +484,7 @@ FILE_HEADER = [
     ('chksum', 'u2'),
 ]
 
-SETUP_BIN_HDR = [
+SETUP_BIN_HDR: list[tuple[str, str]] = [
     ('soft_rev', 'u4'),
     ('para_length', 'u4'),
     ('reserved1', 'u4'),
@@ -473,7 +492,7 @@ SETUP_BIN_HDR = [
 ]
 
 # Info collected when measurement finished
-MEASURE_STOP_INFO = [
+MEASURE_STOP_INFO: list[tuple[str, str]] = [
     ('status', 'u2'),
     ('flags', 'u2'),
     ('stop_time', 'f4'),
@@ -493,7 +512,7 @@ MEASURE_STOP_INFO = [
 ]
 
 # Info collected when FIFO measurement finished
-MEASURE_FCS_INFO = [
+MEASURE_FCS_INFO: list[tuple[str, str]] = [
     ('chan', 'u2'),
     ('fcs_decay_calc', 'u2'),
     ('mt_resol', 'u4'),
@@ -510,7 +529,7 @@ MEASURE_FCS_INFO = [
 ]
 
 # Extension of MeasFCSInfo for other histograms
-HIST_INFO = [
+HIST_INFO: list[tuple[str, str]] = [
     ('fida_time', 'f4'),
     ('filda_time', 'f4'),
     ('fida_points', 'i4'),
@@ -520,7 +539,7 @@ HIST_INFO = [
 ]
 
 # Measurement description blocks
-MEASURE_INFO = [
+MEASURE_INFO: list[tuple[str, str | list[tuple[str, str]]]] = [
     ('time', 'a9'),
     ('date', 'a11'),
     ('mod_ser_no', 'a16'),
@@ -592,7 +611,7 @@ MEASURE_INFO = [
     ('MeasHISTInfo', HIST_INFO),
 ]
 
-BLOCK_HEADER = [
+BLOCK_HEADER: list[tuple[str, str]] = [
     ('block_no', 'i2'),
     ('data_offs', 'i4'),
     ('next_block_offs', 'i4'),
@@ -602,7 +621,7 @@ BLOCK_HEADER = [
     ('block_length', 'u4'),
 ]
 
-BLOCK_HEADER_15 = [
+BLOCK_HEADER_15: list[tuple[str, str]] = [
     ('data_offs_ext', 'u1'),
     ('next_block_offs_ext', 'u1'),
     ('data_offs', 'u4'),
@@ -614,7 +633,7 @@ BLOCK_HEADER_15 = [
 ]
 
 # Mode of creation
-BLOCK_CREATION = {
+BLOCK_CREATION: dict[int, str] = {
     0: 'NOT_USED',
     1: 'MEAS_DATA',
     2: 'FLOW_DATA',
@@ -625,7 +644,7 @@ BLOCK_CREATION = {
     9: 'FIFO_DATA_FROM_FILE',
 }
 
-BLOCK_CONTENT = {
+BLOCK_CONTENT: dict[int, str] = {
     0x0: 'DECAY_BLOCK',
     0x10: 'PAGE_BLOCK',
     0x20: 'FCS_BLOCK',
@@ -642,15 +661,15 @@ BLOCK_CONTENT = {
 }
 
 # Data type
-BLOCK_DTYPE = {
+BLOCK_DTYPE: dict[int, numpy.dtype] = {
     0x000: numpy.dtype('<u2'),
     0x100: numpy.dtype('<u4'),
     0x200: numpy.dtype('<f8'),
 }
 
-HEADER_VALID = {0x1111: False, 0x5555: True}
+HEADER_VALID: dict[int, bool] = {0x1111: False, 0x5555: True}
 
-INFO_IDS = {
+INFO_IDS: dict[str, str] = {
     'SPC Setup Script File': 'Setup script mode: setup only',
     'SPC Setup & Data File': 'Normal mode: setup + data',
     'SPC DLL Data File': 'DLL created: no setup, only data',
@@ -662,9 +681,12 @@ INFO_IDS = {
 }
 
 
-def indent(string, pad=' '):
-    """Return string with all but first line indented."""
-    return f'\n{pad}'.join(str(string).splitlines())
+def indent(*args) -> str:
+    """Return joined string representations of objects with indented lines."""
+    text = '\n'.join(str(arg) for arg in args)
+    return '\n'.join(
+        ('  ' + line if line else line) for line in text.splitlines() if line
+    )[2:]
 
 
 if __name__ == '__main__':
