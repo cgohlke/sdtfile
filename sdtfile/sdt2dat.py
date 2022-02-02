@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # sdtfile/sdt2dat.py
 
-# Copyright (c) 2020-2021, Christoph Gohlke
+# Copyright (c) 2020-2022, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -44,7 +44,7 @@ and saves the decay curves in Globals for Spectroscopy DAT format.
 
 :License: BSD 3-Clause
 
-:Version: 2021.11.18
+:Version: 2022.2.2
 
 For command line usage run ``python -m sdtfile.sdt2dat --help``
 
@@ -64,7 +64,7 @@ libraries, which can be installed with:
 
 """
 
-__version__ = '2021.11.18'
+__version__ = '2022.2.2'
 
 import os
 import sys
