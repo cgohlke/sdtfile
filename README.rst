@@ -17,15 +17,21 @@ equipment for photon counting.
 
 :License: BSD 3-Clause
 
-:Version: 2021.11.18
+:Version: 2022.2.2
 
 Requirements
 ------------
-* `CPython >= 3.7 <https://www.python.org>`_
-* `Numpy 1.19 <https://www.numpy.org>`_
+This release has been tested with the following requirements and dependencies
+(other versions may work):
+
+* `CPython 3.8.10, 3.9.10, 3.10.2 64-bit <https://www.python.org>`_
+* `Numpy 1.21.5 <https://pypi.org/project/numpy/>`_
 
 Revisions
 ---------
+2022.2.2
+    Add type hints.
+    Drop support for Python 3.7 and numpy < 1.19 (NEP29).
 2021.11.18
     Fix reading FLIM files created by Prairie View software (#5).
 2021.3.21
