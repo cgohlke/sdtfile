@@ -36,35 +36,27 @@ This Python script reads single photon counting decay curves from
 Becker & Hickl SDT files, calculates and plots phasor coordinates,
 and saves the decay curves in Globals for Spectroscopy DAT format.
 
-:Author:
-  `Christoph Gohlke <https://www.lfd.uci.edu/~gohlke/>`_
+For command line usage run::
 
-:Organization:
-  Laboratory for Fluorescence Dynamics. University of California, Irvine
-
-:License: BSD 3-Clause
-
-:Version: 2022.2.2
-
-For command line usage run ``python -m sdtfile.sdt2dat --help``
+    python -m sdtfile.sdt2dat --help
 
 For example, to analyze the decay curve in `file.sdt` using a reference decay
 in `reference.sdt` with lifetime 4.0 ns, after subtracting a background of
-100 and extracting data in range 500 to 3900:
+100 and extracting data in range 500 to 3900::
 
-  ``sdt2dat -r reference.sdt -l 4.0 -b 100 -s 500 3900 file.sdt``
+    sdt2dat -r reference.sdt -l 4.0 -b 100 -s 500 3900 file.sdt
 
 The decay curves are saved to `file.sdt.dat`. Phasor coordinates are saved
 to `sdtphasor.tsv`.
 
-This script depends on Python >= 3.7 and the matplotlib, numpy, and click
-libraries, which can be installed with:
+This script depends on Python >= 3.8 and the sdtfile, matplotlib, numpy, and
+click libraries, which can be installed with::
 
-  ``python -m pip install matplotlib click``
+    python -m pip install sdtfile matplotlib click
 
 """
 
-__version__ = '2022.2.2'
+__version__ = '2022.9.28'
 
 import os
 import sys
