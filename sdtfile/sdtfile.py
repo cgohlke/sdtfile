@@ -39,65 +39,85 @@ instrumentation parameters and measurement data. Currently only the
 `Becker & Hickl GmbH <http://www.becker-hickl.de/>`_ is a manufacturer of
 equipment for photon counting.
 
-:Author:
-  `Christoph Gohlke <https://www.lfd.uci.edu/~gohlke/>`_
-
-:Organization:
-  Laboratory for Fluorescence Dynamics. University of California, Irvine
-
+:Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-
-:Version: 2022.2.2
+:Version: 2022.9.28
 
 Requirements
 ------------
+
 This release has been tested with the following requirements and dependencies
 (other versions may work):
 
-* `CPython 3.8.10, 3.9.10, 3.10.2 64-bit <https://www.python.org>`_
-* `Numpy 1.21.5 <https://pypi.org/project/numpy/>`_
+- `CPython 3.8.10, 3.9.13, 3.10.7, 3.11.0rc2 <https://www.python.org>`_
+- `Numpy 1.22.4 <https://pypi.org/project/numpy/>`_
 
 Revisions
 ---------
+
+2022.9.28
+
+- Convert docstrings to Google style with Sphinx directives.
+
 2022.2.2
-    Add type hints.
-    Drop support for Python 3.7 and numpy < 1.19 (NEP29).
+
+- Add type hints.
+- Drop support for Python 3.7 and numpy < 1.19 (NEP29).
+
 2021.11.18
-    Fix reading FLIM files created by Prairie View software (#5).
+
+- Fix reading FLIM files created by Prairie View software (#5).
+
 2021.3.21
-    Add sdt2dat script.
+
+- Add sdt2dat script.
+
 2020.12.10
-    Fix shape of non-square frames.
+
+- Fix shape of non-square frames.
+
 2020.8.3
-    Fix integer overflow (#3).
-    Support os.PathLike file names.
+
+- Fix integer overflow (#3).
+- Support os.PathLike file names.
+
 2020.1.1
-    Fix reading MCS_BLOCK data.
-    Remove support for Python 2.7 and 3.5.
-    Update copyright.
+
+- Fix reading MCS_BLOCK data.
+- Remove support for Python 2.7 and 3.5.
+- Update copyright.
+
 2019.7.28
-    Fix reading compressed, multi-channel data.
+
+- Fix reading compressed, multi-channel data.
+
 2018.9.22
-    Use str, not bytes for ASCII data.
+
+- Use str, not bytes for ASCII data.
+
 2018.8.29
-    Move module into sdtfile package.
+
+- Move module into sdtfile package.
+
 2018.2.7
-    Bug fixes.
+
+- Bug fixes.
+
 2016.3.30
-    Support revision 15 files and compression.
+
+- Support revision 15 files and compression.
+
 2015.1.29
-    Read SPC DLL data files.
+
+- Read SPC DLL data files.
+
 2014.9.5
-    Fix reading multiple MEASURE_INFO records.
 
-Notes
------
-The API is not stable yet and might change between revisions.
-
-This module has been tested with a limited number of files only.
+- Fix reading multiple MEASURE_INFO records.
 
 References
 ----------
+
 1. W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
    pp 401.
 2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
@@ -105,6 +125,7 @@ References
 
 Examples
 --------
+
 Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
@@ -147,7 +168,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2022.2.2'
+__version__ = '2022.9.28'
 
 __all__ = [
     'SdtFile',
@@ -169,37 +190,29 @@ import numpy
 class SdtFile:
     """Becker & Hickl SDT file.
 
-    Attributes
-    ----------
-    header : numpy.rec.array of FILE_HEADER structure
-        General information about the location of the setup and measurement
-        data within the file.
-    info : FileInfo
-        General information in ASCII format.
-    setup : SetupBlock or None
-        Setup block containing all system parameters, display parameters, etc.
-    measure_info : list of numpy.rec.array of MEASURE_INFO structure
-        Measurement description blocks.
-    block_headers : list of numpy.rec.array of BLOCK_HEADER structure
-        Data block headers.
-    data : list of 2D numpy arrays
-        Photon counts at each curve point.
-    times : list of 1D numpy arrays
-        Time axes for each data set.
+    Parameters:
+        arg: File name or open file.
 
     """
 
     filename: str
+    """Name of file."""
     header: numpy.recarray
+    """File header of type FILE_HEADER."""
     info: FileInfo
+    """File info string and attributes."""
     setup: SetupBlock | None
+    """Setup block ascii and binary data."""
     measure_info: list[numpy.recarray]
+    """Measurement description blocks of type MEASURE_INFO."""
     block_headers: list[numpy.recarray]
+    """Data block headers of type BLOCK_HEADER."""
     data: list[numpy.ndarray]
+    """Photon counts at each curve point."""
     times: list[numpy.ndarray]
+    """Time axes for each data set."""
 
-    def __init__(self, arg: str | os.PathLike | BinaryIO) -> None:
-        """Initialize instance from file name or open file."""
+    def __init__(self, arg: str | os.PathLike | BinaryIO, /) -> None:
         if isinstance(arg, (str, os.PathLike)):
             self.filename = os.fspath(arg)
             with open(arg, 'rb') as fh:
@@ -209,10 +222,10 @@ class SdtFile:
             self.filename = ''
             self._fromfile(arg)
 
-    def _fromfile(self, fh: BinaryIO) -> None:
+    def _fromfile(self, fh: BinaryIO, /) -> None:
         """Initialize instance from open file."""
         # read file header
-        self.header = numpy.rec.fromfile(
+        self.header = numpy.rec.fromfile(  # type: ignore
             fh, dtype=FILE_HEADER, shape=1, byteorder='<'
         )[0]
         if self.header.header_valid != 0x5555:
@@ -255,7 +268,9 @@ class SdtFile:
         fh.seek(self.header.meas_desc_block_offset)
         for _ in range(self.header.no_of_meas_desc_blocks):
             self.measure_info.append(
-                numpy.rec.fromfile(fh, dtype=dtype, shape=1, byteorder='<')
+                numpy.rec.fromfile(  # type: ignore
+                    fh, dtype=dtype, shape=1, byteorder='<'
+                )
             )
             fh.seek(self.header.meas_desc_block_length - dtype.itemsize, 1)
 
@@ -270,7 +285,7 @@ class SdtFile:
         for _ in range(self.header.no_of_data_blocks):
             # read data block header
             fh.seek(offset)
-            bh = numpy.rec.fromfile(
+            bh = numpy.rec.fromfile(  # type: ignore
                 fh, dtype=block_header_t, shape=1, byteorder='<'
             )[0]
             self.block_headers.append(bh)
@@ -316,8 +331,13 @@ class SdtFile:
             self.times.append(t)
             offset = bh.next_block_offs
 
-    def block_measure_info(self, block: int) -> numpy.recarray:
-        """Return measure_info record for data block."""
+    def block_measure_info(self, block: int, /) -> numpy.recarray:
+        """Return measure_info record for data block.
+
+        Parameters:
+            block: Block index.
+
+        """
         return self.measure_info[self.block_headers[block].meas_desc_block_no]
 
     def __enter__(self) -> SdtFile:
@@ -331,7 +351,6 @@ class SdtFile:
         return f'<{self.__class__.__name__} {filename!r}>'
 
     def __str__(self) -> str:
-        """Return string containing all information about SdtFile."""
         return indent(
             repr(self),
             # os.path.normpath(os.path.normcase(self.filename)),
@@ -349,11 +368,18 @@ class SdtFile:
 
 
 class FileInfo(str):
-    """File info string and attributes."""
+    """File info string and attributes.
+
+    Parameters:
+        value:
+            File content from FILE_HEADER info_offset and info_length.
+
+    """
 
     id: str
+    """Identification."""
 
-    def __init__(self, value: str) -> None:
+    def __init__(self, value: str, /) -> None:
         str.__init__(self)
         assert value.startswith('*IDENTIFICATION') and value.strip().endswith(
             '*END'
@@ -369,14 +395,22 @@ class FileInfo(str):
 
 
 class SetupBlock:
-    """Setup block ascii and binary data."""
+    """Setup block ascii and binary data.
+
+    Parameters:
+        value:
+            File content from FILE_HEADER setup_offs and setup_length.
+
+    """
 
     __slots__ = ('ascii', 'binary')
 
     ascii: str
+    """ASCII data."""
     binary: bytes | None
+    """Binary data."""
 
-    def __init__(self, value: bytes) -> None:
+    def __init__(self, value: bytes, /) -> None:
         assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
@@ -392,14 +426,21 @@ class SetupBlock:
 
 
 class BlockNo:
-    """The lblock_no field of BLOCK_HEADER."""
+    """BLOCK_HEADER.lblock_no field.
+
+    Parameters:
+        value: Value of BLOCK_HEADER.lblock_no.
+
+    """
 
     __slots__ = ('data', 'module')
 
     data: int
+    """Data."""
     module: int
+    """Module."""
 
-    def __init__(self, value: int) -> None:
+    def __init__(self, value: int, /) -> None:
         self.data = (value & 0xFFFFFF00) >> 24
         self.module = value & 0x000000FF
 
@@ -408,16 +449,25 @@ class BlockNo:
 
 
 class BlockType:
-    """The block_type field of BLOCK_HEADER."""
+    """BLOCK_HEADER.block_type field.
+
+    Parameters:
+        value: Value of BLOCK_HEADER.block_type.
+
+    """
 
     __slots__ = ('mode', 'contents', 'dtype', 'compress')
 
     mode: str
+    """BLOCK_CREATION."""
     contents: str
+    """BLOCK_CONTENT."""
     dtype: numpy.dtype
+    """BLOCK_DTYPE."""
     compress: bool
+    """Data is compressed."""
 
-    def __init__(self, value: int) -> None:
+    def __init__(self, value: int, /) -> None:
         self.mode = BLOCK_CREATION[value & 0xF]
         self.contents = BLOCK_CONTENT[value & 0xF0]
         self.dtype = BLOCK_DTYPE[value & 0xF00]
@@ -437,14 +487,21 @@ class BlockType:
 
 
 class FileRevision:
-    """The revision field of FILE_HEADER."""
+    """FILE_HEADER.revision field.
+
+    Parameters:
+        value: Value of FILE_HEADER.revision.
+
+    """
 
     __slots__ = ('revision', 'module')
 
     revision: int
+    """Revision."""
     module: str
+    """Module."""
 
-    def __init__(self, value: int) -> None:
+    def __init__(self, value: int, /) -> None:
         self.revision = value & 0b1111
         self.module = {
             0x20: 'SPC-130',
