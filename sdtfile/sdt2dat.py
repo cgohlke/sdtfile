@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # sdtfile/sdt2dat.py
 
-# Copyright (c) 2020-2022, Christoph Gohlke
+# Copyright (c) 2020-2023, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -56,18 +56,18 @@ click libraries, which can be installed with::
 
 """
 
-__version__ = '2022.9.28'
+__version__ = '2023.8.30'
 
+import math
 import os
 import sys
-import math
 
 import numpy
 
 
 def sdtread(filename):
     """Return decay curve and time axis from Becker & Hickl SDT file."""
-    from sdtfile import SdtFile, BlockType
+    from sdtfile import BlockType, SdtFile
 
     with SdtFile(filename) as sdt:
         for i in range(len(sdt.data)):
@@ -79,7 +79,7 @@ def sdtread(filename):
 
 def tsvwrite(filename, labels, *args):
     """Write arrays to TSV file."""
-    with open(filename, 'w') as fh:
+    with open(filename, 'w', encoding='utf-8') as fh:
         fh.write('\t'.join(labels))
         fh.write('\n')
         for i in range(len(args[0])):
@@ -99,7 +99,7 @@ def globalsdat_write(
         )
     start, stop = slice(start, stop).indices(len(decay))[:2]
     step = 1e3 / (len(decay) + 1) / frequency
-    with open(filename, 'w') as fh:
+    with open(filename, 'w', encoding='ascii') as fh:
         fh.write(f'{step:8.5f}    {start}     {stop}\n')
         for d, r in zip(decay.astype('int64'), reference.astype('int64')):
             fh.write(f'{int(r)}   {int(d)}\n')
@@ -168,7 +168,7 @@ def phasor_from_signal(
 
 
 def universial_circle(samples=65):
-    """Return phasor coordinates (g, s) of universial half circle."""
+    """Return phasor coordinates (g, s) of universal half circle."""
     t = numpy.arange(0.0, samples, 1.0, dtype='float64')
     t *= math.pi / (samples - 1)
     real = 0.5 * (numpy.cos(t) + 1.0)
@@ -405,7 +405,7 @@ def main():
         else:
             raise click.UsageError('missing FILES')
 
-    run()
+    run()  # pylint: disable=no-value-for-parameter
 
 
 if __name__ == '__main__':
