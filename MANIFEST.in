@@ -1,6 +1,14 @@
 include LICENSE
 include README.rst
 
+include sdtfile/py.typed
+
+exclude *.cmd
+recursive-exclude doc *
+recursive-exclude docs *
+recursive-exclude test *
+recursive-exclude tests *
+
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 recursive-exclude * *Copy*
