@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2022, Christoph Gohlke
+# Copyright (c) 2007-2023, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,19 +41,38 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2022.9.28
+:Version: 2023.8.30
+
+Quickstart
+----------
+
+Install the sdtfile package and all dependencies from the
+`Python Package Index <https://pypi.org/project/sdtfile/>`_::
+
+    python -m pip install -U sdtfile
+
+See `Examples`_ for using the programming interface.
+
+Source code and support are available on
+`GitHub <https://github.com/cgohlke/sdtfile>`_.
 
 Requirements
 ------------
 
-This release has been tested with the following requirements and dependencies
+This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython 3.8.10, 3.9.13, 3.10.7, 3.11.0rc2 <https://www.python.org>`_
-- `Numpy 1.22.4 <https://pypi.org/project/numpy/>`_
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.5, 3.12rc
+- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
 
 Revisions
 ---------
+
+2023.8.30
+
+- Fix linting issues.
+- Add py.typed marker.
+- Drop support for Python 3.8 and numpy < 1.22 (NEP29).
 
 2022.9.28
 
@@ -133,7 +152,7 @@ Read image and metadata from a "SPC Setup & Data File":
 588
 >>> sdt.info.id[1:-1]
 'SPC Setup & Data File'
->>> int(sdt.measure_info[0].scan_x)
+>>> int(sdt.measure_info[0].scan_x[0])
 128
 >>> len(sdt.data)
 1
@@ -142,7 +161,7 @@ Read image and metadata from a "SPC Setup & Data File":
 >>> sdt.times[0].shape
 (256,)
 
-Read data and metadata from a "SPC Setup & Data File" with mutliple data sets:
+Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 
 >>> sdt = SdtFile('fluorescein.sdt')
 >>> len(sdt.data)
@@ -168,7 +187,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2022.9.28'
+__version__ = '2023.8.30'
 
 __all__ = [
     'SdtFile',
@@ -179,12 +198,17 @@ __all__ = [
     'FileRevision',
 ]
 
-import os
 import io
+import os
 import zipfile
-from typing import BinaryIO
+from typing import TYPE_CHECKING
 
 import numpy
+
+if TYPE_CHECKING:
+    from typing import Any, BinaryIO
+
+    from numpy.typing import NDArray
 
 
 class SdtFile:
@@ -197,19 +221,26 @@ class SdtFile:
 
     filename: str
     """Name of file."""
+
     header: numpy.recarray
     """File header of type FILE_HEADER."""
+
     info: FileInfo
     """File info string and attributes."""
+
     setup: SetupBlock | None
     """Setup block ascii and binary data."""
+
     measure_info: list[numpy.recarray]
     """Measurement description blocks of type MEASURE_INFO."""
+
     block_headers: list[numpy.recarray]
     """Data block headers of type BLOCK_HEADER."""
-    data: list[numpy.ndarray]
+
+    data: list[NDArray[Any]]
     """Photon counts at each curve point."""
-    times: list[numpy.ndarray]
+
+    times: list[NDArray[Any]]
     """Time axes for each data set."""
 
     def __init__(self, arg: str | os.PathLike | BinaryIO, /) -> None:
@@ -306,11 +337,11 @@ class SdtFile:
 
             # TODO: support more block types
             # the following works with DECAY_BLOCK, IMG_BLOCK, and MCS_BLOCK
-            adc_re = int(mi.adc_re)
-            scan_x = int(mi.scan_x)
-            scan_y = int(mi.scan_y)
-            image_x = int(mi.image_x)
-            image_y = int(mi.image_y)
+            adc_re = int(mi.adc_re[0])
+            scan_x = int(mi.scan_x[0])
+            scan_y = int(mi.scan_y[0])
+            image_x = int(mi.image_x[0])
+            image_y = int(mi.image_y[0])
             if dsize == scan_x * scan_y * adc_re:
                 data = data.reshape(scan_y, scan_x, adc_re)
             elif dsize == image_x * image_y * adc_re:
@@ -327,7 +358,7 @@ class SdtFile:
             else:
                 # generate time axis
                 t = numpy.arange(adc_re, dtype=numpy.float64)
-                t *= mi.tac_r / (float(mi.tac_g) * adc_re)
+                t *= mi.tac_r / (float(mi.tac_g[0]) * adc_re)
             self.times.append(t)
             offset = bh.next_block_offs
 
@@ -348,7 +379,7 @@ class SdtFile:
 
     def __repr__(self) -> str:
         filename = os.path.split(self.filename)[-1]
-        return f'<{self.__class__.__name__} {filename!r}>'
+        return f'{self.__class__.__name__}({filename!r})'
 
     def __str__(self) -> str:
         return indent(
@@ -371,8 +402,7 @@ class FileInfo(str):
     """File info string and attributes.
 
     Parameters:
-        value:
-            File content from FILE_HEADER info_offset and info_length.
+        value: File content from FILE_HEADER info_offset and info_length.
 
     """
 
@@ -398,8 +428,7 @@ class SetupBlock:
     """Setup block ascii and binary data.
 
     Parameters:
-        value:
-            File content from FILE_HEADER setup_offs and setup_length.
+        value: File content from FILE_HEADER setup_offs and setup_length.
 
     """
 
@@ -407,6 +436,7 @@ class SetupBlock:
 
     ascii: str
     """ASCII data."""
+
     binary: bytes | None
     """Binary data."""
 
@@ -415,7 +445,7 @@ class SetupBlock:
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
             self.ascii = value[:i].decode('windows-1250')
-            self.binary = bytes(value[i + 15 : -10])
+            self.binary = value[i:]  # [i + 15 : -10]
             # TODO: parse binary data here
         else:
             self.ascii = value.decode('windows-1250')
@@ -437,6 +467,7 @@ class BlockNo:
 
     data: int
     """Data."""
+
     module: int
     """Module."""
 
@@ -445,7 +476,7 @@ class BlockNo:
         self.module = value & 0x000000FF
 
     def __repr__(self) -> str:
-        return f'<{self.__class__.__name__} {self.data} {self.module}>'
+        return f'{self.__class__.__name__}({self.data} << 24 & {self.module})'
 
 
 class BlockType:
@@ -460,10 +491,13 @@ class BlockType:
 
     mode: str
     """BLOCK_CREATION."""
+
     contents: str
     """BLOCK_CONTENT."""
+
     dtype: numpy.dtype
     """BLOCK_DTYPE."""
+
     compress: bool
     """Data is compressed."""
 
@@ -498,6 +532,7 @@ class FileRevision:
 
     revision: int
     """Revision."""
+
     module: str
     """Module."""
 
