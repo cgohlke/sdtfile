@@ -11,19 +11,38 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2022.9.28
+:Version: 2023.8.30
+
+Quickstart
+----------
+
+Install the sdtfile package and all dependencies from the
+`Python Package Index <https://pypi.org/project/sdtfile/>`_::
+
+    python -m pip install -U sdtfile
+
+See `Examples`_ for using the programming interface.
+
+Source code and support are available on
+`GitHub <https://github.com/cgohlke/sdtfile>`_.
 
 Requirements
 ------------
 
-This release has been tested with the following requirements and dependencies
+This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython 3.8.10, 3.9.13, 3.10.7, 3.11.0rc2 <https://www.python.org>`_
-- `Numpy 1.22.4 <https://pypi.org/project/numpy/>`_
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.5, 3.12rc
+- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
 
 Revisions
 ---------
+
+2023.8.30
+
+- Fix linting issues.
+- Add py.typed marker.
+- Drop support for Python 3.8 and numpy < 1.22 (NEP29).
 
 2022.9.28
 
@@ -103,7 +122,7 @@ Read image and metadata from a "SPC Setup & Data File":
 588
 >>> sdt.info.id[1:-1]
 'SPC Setup & Data File'
->>> int(sdt.measure_info[0].scan_x)
+>>> int(sdt.measure_info[0].scan_x[0])
 128
 >>> len(sdt.data)
 1
@@ -112,7 +131,7 @@ Read image and metadata from a "SPC Setup & Data File":
 >>> sdt.times[0].shape
 (256,)
 
-Read data and metadata from a "SPC Setup & Data File" with mutliple data sets:
+Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 
 >>> sdt = SdtFile('fluorescein.sdt')
 >>> len(sdt.data)
