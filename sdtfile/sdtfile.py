@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.8.30
+:Version: 2023.9.28
 
 Quickstart
 ----------
@@ -68,6 +68,11 @@ This revision was tested with the following requirements and dependencies
 Revisions
 ---------
 
+2023.9.28
+
+- Update structs to SPCM v.9.66 (breaking).
+- Shorten MEASURE_INFO struct to meas_desc_block_length.
+
 2023.8.30
 
 - Fix linting issues.
@@ -89,58 +94,17 @@ Revisions
 
 2021.3.21
 
-- Add sdt2dat script.
+- …
 
-2020.12.10
-
-- Fix shape of non-square frames.
-
-2020.8.3
-
-- Fix integer overflow (#3).
-- Support os.PathLike file names.
-
-2020.1.1
-
-- Fix reading MCS_BLOCK data.
-- Remove support for Python 2.7 and 3.5.
-- Update copyright.
-
-2019.7.28
-
-- Fix reading compressed, multi-channel data.
-
-2018.9.22
-
-- Use str, not bytes for ASCII data.
-
-2018.8.29
-
-- Move module into sdtfile package.
-
-2018.2.7
-
-- Bug fixes.
-
-2016.3.30
-
-- Support revision 15 files and compression.
-
-2015.1.29
-
-- Read SPC DLL data files.
-
-2014.9.5
-
-- Fix reading multiple MEASURE_INFO records.
+Refer to the CHANGES file for older revisions.
 
 References
 ----------
 
-1. W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
-   pp 401.
+1. W Becker. The bh TCSPC Handbook. 9th Edition. Becker & Hickl GmbH 2021.
+   pp 879.
 2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
-   SPCM software.
+   SPCM software installation.
 
 Examples
 --------
@@ -187,7 +151,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2023.8.30'
+__version__ = '2023.9.28'
 
 __all__ = [
     'SdtFile',
@@ -259,7 +223,7 @@ class SdtFile:
         self.header = numpy.rec.fromfile(  # type: ignore
             fh, dtype=FILE_HEADER, shape=1, byteorder='<'
         )[0]
-        if self.header.header_valid != 0x5555:
+        if self.header.chksum != 0x55AA and self.header.header_valid != 0x5555:
             raise ValueError('not a SDT file')
         if self.header.no_of_data_blocks == 0x7FFF:
             self.header.no_of_data_blocks = self.header.reserved1
@@ -267,7 +231,7 @@ class SdtFile:
             raise ValueError('')
 
         # read file info
-        fh.seek(self.header.info_offset)
+        fh.seek(self.header.info_offs)
         info = fh.read(self.header.info_length).decode('windows-1250')
         info = info.replace('\r\n', '\n')
         self.info = FileInfo(info)
@@ -292,11 +256,10 @@ class SdtFile:
 
         # read measurement description blocks
         self.measure_info = []
-        dtype = numpy.dtype(MEASURE_INFO)
-        if dtype.itemsize > self.header.meas_desc_block_length:
-            # TODO: shorten MEASURE_INFO to meas_desc_block_length
-            pass
-        fh.seek(self.header.meas_desc_block_offset)
+        dtype = struct_dtype(
+            MEASURE_INFO, int(self.header.meas_desc_block_length)
+        )
+        fh.seek(self.header.meas_desc_block_offs)
         for _ in range(self.header.no_of_meas_desc_blocks):
             self.measure_info.append(
                 numpy.rec.fromfile(  # type: ignore
@@ -306,13 +269,16 @@ class SdtFile:
             fh.seek(self.header.meas_desc_block_length - dtype.itemsize, 1)
 
         rev = FileRevision(self.header.revision)
-        block_header_t = BLOCK_HEADER if rev.revision < 15 else BLOCK_HEADER_15
+        if rev.revision >= 15:
+            block_header_t = BLOCK_HEADER
+        else:
+            block_header_t = BLOCK_HEADER_OLD
 
         self.times = []
         self.data = []
         self.block_headers = []
 
-        offset = self.header.data_block_offset
+        offset = self.header.data_block_offs
         for _ in range(self.header.no_of_data_blocks):
             # read data block header
             fh.seek(offset)
@@ -337,29 +303,52 @@ class SdtFile:
 
             # TODO: support more block types
             # the following works with DECAY_BLOCK, IMG_BLOCK, and MCS_BLOCK
+
+            # assume adc_re is always present
             adc_re = int(mi.adc_re[0])
-            scan_x = int(mi.scan_x[0])
-            scan_y = int(mi.scan_y[0])
-            image_x = int(mi.image_x[0])
-            image_y = int(mi.image_y[0])
+
+            # the following fields may not be present
+            try:
+                scan_x = int(mi.scan_x[0])
+                scan_y = int(mi.scan_y[0])
+            except AttributeError:
+                scan_x = 0
+                scan_y = 0
+            try:
+                image_x = int(mi.image_x[0])
+                image_y = int(mi.image_y[0])
+            except AttributeError:
+                image_x = 0
+                image_y = 0
+            try:
+                mcs_points = mi.MeasHISTInfo.mcs_points[0]
+            except AttributeError:
+                mcs_points = -1
+            try:
+                mcs_time = mi.MeasHISTInfo.mcs_time[0]
+            except AttributeError:
+                mcs_time = 0
+
+            if adc_re == 0:
+                adc_re = 65536
             if dsize == scan_x * scan_y * adc_re:
                 data = data.reshape(scan_y, scan_x, adc_re)
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape(image_y, image_x, adc_re)
-            elif dsize == mi.MeasHISTInfo.mcs_points[0]:
+            elif dsize == mcs_points:
                 data = data.reshape(-1, dsize)
             else:
                 data = data.reshape(-1, adc_re)
             self.data.append(data)
 
-            if bt.contents == 'MCS_BLOCK':
-                t = numpy.arange(dsize, dtype=numpy.float64)
-                t *= mi.MeasHISTInfo.mcs_time[0]
+            if bt.contents == 'MCS_BLOCK' and mcs_time != 0:
+                time = numpy.arange(dsize, dtype=numpy.float64)
+                time *= mcs_time
             else:
                 # generate time axis
-                t = numpy.arange(adc_re, dtype=numpy.float64)
-                t *= mi.tac_r / (float(mi.tac_g[0]) * adc_re)
-            self.times.append(t)
+                time = numpy.arange(adc_re, dtype=numpy.float64)
+                time *= mi.tac_r / (float(mi.tac_g[0]) * adc_re)
+            self.times.append(time)
             offset = bh.next_block_offs
 
     def block_measure_info(self, block: int, /) -> numpy.recarray:
@@ -402,7 +391,7 @@ class FileInfo(str):
     """File info string and attributes.
 
     Parameters:
-        value: File content from FILE_HEADER info_offset and info_length.
+        value: File content from FILE_HEADER info_offs and info_length.
 
     """
 
@@ -550,6 +539,21 @@ class FileRevision:
             0x28: 'SPC-150',
             0x29: 'DPC-230',
             0x2A: 'SPC-130EM',
+            0x2B: 'SPC-160',
+            0x2E: 'SPC-150N',
+            0x80: 'SPC-150NX',
+            0x81: 'SPC-160X',
+            0x82: 'SPC-160PCIE',
+            0x83: 'SPC-130EMN',
+            0x84: 'SPC-180N',
+            0x85: 'SPC-180NX',
+            0x86: 'SPC-180NXX',
+            0x87: 'SPC-180N-USB',
+            0x88: 'SPC-130IN',
+            0x89: 'SPC-130INX',
+            0x8A: 'SPC-130INXX',
+            0x8B: 'SPC-QC-104',
+            0x8C: 'SPC-QC-004',
         }.get((value & 0xFF0) >> 4, 'Unknown')
 
     def __repr__(self) -> str:
@@ -560,14 +564,14 @@ class FileRevision:
 
 FILE_HEADER: list[tuple[str, str]] = [
     ('revision', 'i2'),
-    ('info_offset', 'i4'),
+    ('info_offs', 'i4'),
     ('info_length', 'i2'),
     ('setup_offs', 'i4'),
-    ('setup_length', 'i2'),
-    ('data_block_offset', 'i4'),
+    ('setup_length', 'u2'),
+    ('data_block_offs', 'i4'),
     ('no_of_data_blocks', 'i2'),
-    ('data_block_length', 'i4'),
-    ('meas_desc_block_offset', 'i4'),
+    ('data_block_length', 'u4'),
+    ('meas_desc_block_offs', 'i4'),
     ('no_of_meas_desc_blocks', 'i2'),
     ('meas_desc_block_length', 'i2'),
     ('header_valid', 'u2'),
@@ -628,6 +632,42 @@ HIST_INFO: list[tuple[str, str]] = [
     ('filda_points', 'i4'),
     ('mcs_time', 'f4'),
     ('mcs_points', 'i4'),
+    ('cross_calc_phot', 'u4'),
+    ('mcsta_points', 'u2'),
+    ('mcsta_flags', 'u2'),
+    ('mcsta_tpp', 'u4'),
+    ('calc_markers', 'u4'),
+    ('fcs_calc_phot', 'u4'),
+    ('reserved3', 'u4'),
+]
+
+HIST_INFO_EXT: list[tuple[str, str]] = [
+    ('first_frame_time', 'f4'),
+    ('frame_time', 'f4'),
+    ('line_time', 'f4'),
+    ('pixel_time', 'f4'),
+    ('scan_type', 'i2'),
+    ('skip_2nd_line_clk', 'i2'),
+    ('right_border', 'u4'),
+    ('info', 'a40'),
+]
+
+MEASURE_INFO_EXT: list[tuple[str, str]] = [
+    ('DCU_in_use', 'u4'),
+    ('dcu_ser_no', '4a16'),
+    ('axio_name', 'a32'),
+    ('axio_lens_name', 'a64'),
+    ('SIS_in_use', 'u4'),
+    ('sis_ser_no', '4a16'),
+    ('gvd_ser_no', 'a16'),
+    ('gvd_zoom_factor', 'f4'),
+    ('DCS_FOV_at_zoom_1', 'f4'),
+    ('axio_connected', 'i2'),
+    ('axio_lens_magnifier', 'f4'),
+    ('axio_FOV', 'f4'),
+    ('tdc_offset', '4f4'),
+    ('tdc_control', 'u4'),
+    ('reserve', 'a1250'),
 ]
 
 # Measurement description blocks
@@ -701,9 +741,33 @@ MEASURE_INFO: list[tuple[str, str | list[tuple[str, str]]]] = [
     ('det', 'i2'),
     ('x_axis', 'i2'),
     ('MeasHISTInfo', HIST_INFO),
+    ('HISTInfoExt', HIST_INFO_EXT),
+    ('sync_delay', 'f4'),
+    ('sdel_ser_no', 'u2'),
+    ('sdel_input', 'i1'),
+    ('mosaic_ctrl', 'i1'),
+    ('mosaic_x', 'u1'),
+    ('mosaic_y', 'u1'),
+    ('frames_per_el', 'i2'),
+    ('chan_per_el', 'i2'),
+    ('mosaic_cycles_done', 'i4'),
+    ('mla_ser_no', 'u2'),
+    ('DCC_in_use', 'u1'),
+    ('dcc_ser_no', 'a12'),
+    ('TiSaLas_status', 'u2'),
+    ('TiSaLas_wav', 'u2'),
+    ('AOM_status', 'u1'),
+    ('AOM_power', 'u1'),
+    ('ddg_ser_no', 'a8'),
+    ('prior_ser_no', 'i4'),
+    ('mosaic_x_hi', 'u1'),
+    ('mosaic_y_hi', 'u1'),
+    ('reserve', 'a11'),
+    ('extension_used', 'u1'),
+    ('minfo_ext', MEASURE_INFO_EXT),
 ]
 
-BLOCK_HEADER: list[tuple[str, str]] = [
+BLOCK_HEADER_OLD: list[tuple[str, str]] = [
     ('block_no', 'i2'),
     ('data_offs', 'i4'),
     ('next_block_offs', 'i4'),
@@ -713,7 +777,7 @@ BLOCK_HEADER: list[tuple[str, str]] = [
     ('block_length', 'u4'),
 ]
 
-BLOCK_HEADER_15: list[tuple[str, str]] = [
+BLOCK_HEADER: list[tuple[str, str]] = [
     ('data_offs_ext', 'u1'),
     ('next_block_offs_ext', 'u1'),
     ('data_offs', 'u4'),
@@ -773,6 +837,33 @@ INFO_IDS: dict[str, str] = {
 }
 
 
+def struct_dtype(
+    struct: list[tuple[str, str | list[tuple[str, str]]]], size: int, /
+) -> numpy.dtype:
+    """Return numpy dtype for struct not exceeding size bytes."""
+    assert size > 0
+    fields = len(struct)
+    dtype = numpy.dtype(struct)
+    while dtype.itemsize > size and fields > 0:
+        # last_dtype = struct[-1][1]
+        # if (
+        #     isinstance(last_dtype, list)
+        #     and dtype.itemsize - size < numpy.dtype(last_dtype).itemsize
+        # ):
+        #     struct = struct.copy()
+        #     struct[-1] = (
+        #         struct[-1][0],
+        #         struct_dtype(last_dtype, dtype.itemsize - size).descr
+        #     )
+        #     dtype = numpy.dtype(struct)
+        #     break
+        fields -= 1
+        dtype = numpy.dtype(struct[:fields])
+    # if dtype.itemsize != size:
+    #    log_warning(f'struct size {dtype.itemsize} != {size}')
+    return dtype
+
+
 def indent(*args) -> str:
     """Return joined string representations of objects with indented lines."""
     text = '\n'.join(str(arg) for arg in args)
@@ -781,7 +872,23 @@ def indent(*args) -> str:
     )[2:]
 
 
+def log_warning(msg: object, *args: object, **kwargs: Any) -> None:
+    """Log message with level WARNING."""
+    import logging
+
+    logging.getLogger(__name__).warning(msg, *args, **kwargs)
+
+
 if __name__ == '__main__':
     import doctest
 
     doctest.testmod()
+
+    assert numpy.dtype(FILE_HEADER).itemsize == 42  # BH_HDR_LENGTH
+    assert numpy.dtype(MEASURE_INFO).itemsize == 2048
+    assert numpy.dtype(MEASURE_INFO_EXT).itemsize == 1536
+    assert numpy.dtype(HIST_INFO).itemsize == 48
+    assert numpy.dtype(HIST_INFO_EXT).itemsize == 64
+    assert numpy.dtype(MEASURE_FCS_INFO).itemsize == 38
+    assert numpy.dtype(MEASURE_STOP_INFO).itemsize == 60
+    assert numpy.dtype(SETUP_BIN_HDR).itemsize == 14
