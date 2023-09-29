@@ -11,7 +11,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.8.30
+:Version: 2023.9.28
 
 Quickstart
 ----------
@@ -38,6 +38,11 @@ This revision was tested with the following requirements and dependencies
 Revisions
 ---------
 
+2023.9.28
+
+- Update structs to SPCM v.9.66 (breaking).
+- Shorten MEASURE_INFO struct to meas_desc_block_length.
+
 2023.8.30
 
 - Fix linting issues.
@@ -59,58 +64,17 @@ Revisions
 
 2021.3.21
 
-- Add sdt2dat script.
+- …
 
-2020.12.10
-
-- Fix shape of non-square frames.
-
-2020.8.3
-
-- Fix integer overflow (#3).
-- Support os.PathLike file names.
-
-2020.1.1
-
-- Fix reading MCS_BLOCK data.
-- Remove support for Python 2.7 and 3.5.
-- Update copyright.
-
-2019.7.28
-
-- Fix reading compressed, multi-channel data.
-
-2018.9.22
-
-- Use str, not bytes for ASCII data.
-
-2018.8.29
-
-- Move module into sdtfile package.
-
-2018.2.7
-
-- Bug fixes.
-
-2016.3.30
-
-- Support revision 15 files and compression.
-
-2015.1.29
-
-- Read SPC DLL data files.
-
-2014.9.5
-
-- Fix reading multiple MEASURE_INFO records.
+Refer to the CHANGES file for older revisions.
 
 References
 ----------
 
-1. W Becker. The bh TCSPC Handbook. Third Edition. Becker & Hickl GmbH 2008.
-   pp 401.
+1. W Becker. The bh TCSPC Handbook. 9th Edition. Becker & Hickl GmbH 2021.
+   pp 879.
 2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
-   SPCM software.
+   SPCM software installation.
 
 Examples
 --------
