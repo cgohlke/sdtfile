@@ -11,7 +11,8 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.9.28
+:Version: 2024.4.24
+:DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
 ----------
@@ -32,11 +33,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.5, 3.12rc
-- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3
+- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
 
 Revisions
 ---------
+
+2024.4.24
+
+- Support NumPy 2.
 
 2023.9.28
 
@@ -82,7 +87,7 @@ Examples
 Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
->>> sdt.header.revision
+>>> int(sdt.header.revision)
 588
 >>> sdt.info.id[1:-1]
 'SPC Setup & Data File'
