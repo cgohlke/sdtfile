@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2024.4.24
+
+- Support NumPy 2.
+
 2023.9.28
 
 - Update structs to SPCM v.9.66 (breaking).
