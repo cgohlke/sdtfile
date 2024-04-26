@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2023, Christoph Gohlke
+# Copyright (c) 2007-2024, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,8 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.9.28
+:Version: 2024.4.24
+:DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
 ----------
@@ -62,11 +63,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.5, 3.12rc
-- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3
+- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
 
 Revisions
 ---------
+
+2024.4.24
+
+- Support NumPy 2.
 
 2023.9.28
 
@@ -112,7 +117,7 @@ Examples
 Read image and metadata from a "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
->>> sdt.header.revision
+>>> int(sdt.header.revision)
 588
 >>> sdt.info.id[1:-1]
 'SPC Setup & Data File'
@@ -151,7 +156,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2023.9.28'
+__version__ = '2024.4.24'
 
 __all__ = [
     'SdtFile',
@@ -302,7 +307,7 @@ class SdtFile:
                 data = numpy.fromfile(fh, dtype=dtype, count=dsize)
 
             # TODO: support more block types
-            # the following works with DECAY_BLOCK, IMG_BLOCK, and MCS_BLOCK
+            # the following works with DECAY, IMG, MCS, PAGE
 
             # assume adc_re is always present
             adc_re = int(mi.adc_re[0])
@@ -649,17 +654,17 @@ HIST_INFO_EXT: list[tuple[str, str]] = [
     ('scan_type', 'i2'),
     ('skip_2nd_line_clk', 'i2'),
     ('right_border', 'u4'),
-    ('info', 'a40'),
+    ('info', 'S40'),
 ]
 
 MEASURE_INFO_EXT: list[tuple[str, str]] = [
     ('DCU_in_use', 'u4'),
-    ('dcu_ser_no', '4a16'),
-    ('axio_name', 'a32'),
-    ('axio_lens_name', 'a64'),
+    ('dcu_ser_no', '4S16'),
+    ('axio_name', 'S32'),
+    ('axio_lens_name', 'S64'),
     ('SIS_in_use', 'u4'),
-    ('sis_ser_no', '4a16'),
-    ('gvd_ser_no', 'a16'),
+    ('sis_ser_no', '4S16'),
+    ('gvd_ser_no', 'S16'),
     ('gvd_zoom_factor', 'f4'),
     ('DCS_FOV_at_zoom_1', 'f4'),
     ('axio_connected', 'i2'),
@@ -667,14 +672,14 @@ MEASURE_INFO_EXT: list[tuple[str, str]] = [
     ('axio_FOV', 'f4'),
     ('tdc_offset', '4f4'),
     ('tdc_control', 'u4'),
-    ('reserve', 'a1250'),
+    ('reserve', 'S1250'),
 ]
 
 # Measurement description blocks
 MEASURE_INFO: list[tuple[str, str | list[tuple[str, str]]]] = [
-    ('time', 'a9'),
-    ('date', 'a11'),
-    ('mod_ser_no', 'a16'),
+    ('time', 'S9'),
+    ('date', 'S11'),
+    ('mod_ser_no', 'S16'),
     ('meas_mode', 'i2'),
     ('cfd_ll', 'f4'),
     ('cfd_lh', 'f4'),
@@ -703,7 +708,7 @@ MEASURE_INFO: list[tuple[str, str | list[tuple[str, str]]]] = [
     ('dither', 'i2'),
     ('incr', 'i2'),
     ('mem_bank', 'i2'),
-    ('mod', 'a16'),
+    ('mod', 'S16'),
     ('syn_th', 'f4'),
     ('dead_time_comp', 'i2'),
     ('polarity_l', 'i2'),
@@ -753,16 +758,16 @@ MEASURE_INFO: list[tuple[str, str | list[tuple[str, str]]]] = [
     ('mosaic_cycles_done', 'i4'),
     ('mla_ser_no', 'u2'),
     ('DCC_in_use', 'u1'),
-    ('dcc_ser_no', 'a12'),
+    ('dcc_ser_no', 'S12'),
     ('TiSaLas_status', 'u2'),
     ('TiSaLas_wav', 'u2'),
     ('AOM_status', 'u1'),
     ('AOM_power', 'u1'),
-    ('ddg_ser_no', 'a8'),
+    ('ddg_ser_no', 'S8'),
     ('prior_ser_no', 'i4'),
     ('mosaic_x_hi', 'u1'),
     ('mosaic_y_hi', 'u1'),
-    ('reserve', 'a11'),
+    ('reserve', 'S11'),
     ('extension_used', 'u1'),
     ('minfo_ext', MEASURE_INFO_EXT),
 ]
