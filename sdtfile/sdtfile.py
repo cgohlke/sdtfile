@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.4.24
+:Version: 2024.5.24
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -69,6 +69,10 @@ This revision was tested with the following requirements and dependencies
 Revisions
 ---------
 
+2024.5.24
+
+- Fix docstring examples not correctly rendered on GitHub.
+
 2024.4.24
 
 - Support NumPy 2.
@@ -79,25 +83,6 @@ Revisions
 - Shorten MEASURE_INFO struct to meas_desc_block_length.
 
 2023.8.30
-
-- Fix linting issues.
-- Add py.typed marker.
-- Drop support for Python 3.8 and numpy < 1.22 (NEP29).
-
-2022.9.28
-
-- Convert docstrings to Google style with Sphinx directives.
-
-2022.2.2
-
-- Add type hints.
-- Drop support for Python 3.7 and numpy < 1.19 (NEP29).
-
-2021.11.18
-
-- Fix reading FLIM files created by Prairie View software (#5).
-
-2021.3.21
 
 - …
 
@@ -156,7 +141,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2024.4.24'
+__version__ = '2024.5.24'
 
 __all__ = [
     'SdtFile',
