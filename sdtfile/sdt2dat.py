@@ -64,6 +64,8 @@ import sys
 
 import numpy
 
+# TODO: reimplement this with PhasorPy <https://www.phasorpy.org>
+
 
 def sdtread(filename):
     """Return decay curve and time axis from Becker & Hickl SDT file."""
