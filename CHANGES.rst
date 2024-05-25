@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2024.5.24
+
+- Fix docstring examples not correctly rendered on GitHub.
+
 2024.4.24
 
 - Support NumPy 2.
