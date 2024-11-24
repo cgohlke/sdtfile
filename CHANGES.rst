@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2024.11.24
+
+- Update MEASURE_INFO_EXT struct to SPCM v.9.9 (breaking).
+
 2024.5.24
 
 - Fix docstring examples not correctly rendered on GitHub.
