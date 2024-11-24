@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.5.24
+:Version: 2024.11.24
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3
-- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0
+- `Numpy <https://pypi.org/project/numpy/>`_ 2.1.3
 
 Revisions
 ---------
+
+2024.11.24
+
+- Update MEASURE_INFO_EXT struct to SPCM v.9.9 (breaking).
 
 2024.5.24
 
@@ -141,9 +145,10 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2024.5.24'
+__version__ = '2024.11.24'
 
 __all__ = [
+    '__version__',
     'SdtFile',
     'FileInfo',
     'SetupBlock',
@@ -176,7 +181,7 @@ class SdtFile:
     filename: str
     """Name of file."""
 
-    header: numpy.recarray
+    header: numpy.recarray[Any, Any]
     """File header of type FILE_HEADER."""
 
     info: FileInfo
@@ -185,10 +190,10 @@ class SdtFile:
     setup: SetupBlock | None
     """Setup block ascii and binary data."""
 
-    measure_info: list[numpy.recarray]
+    measure_info: list[numpy.recarray[Any, Any]]
     """Measurement description blocks of type MEASURE_INFO."""
 
-    block_headers: list[numpy.recarray]
+    block_headers: list[numpy.recarray[Any, Any]]
     """Data block headers of type BLOCK_HEADER."""
 
     data: list[NDArray[Any]]
@@ -197,7 +202,7 @@ class SdtFile:
     times: list[NDArray[Any]]
     """Time axes for each data set."""
 
-    def __init__(self, arg: str | os.PathLike | BinaryIO, /) -> None:
+    def __init__(self, arg: str | os.PathLike[Any] | BinaryIO, /) -> None:
         if isinstance(arg, (str, os.PathLike)):
             self.filename = os.fspath(arg)
             with open(arg, 'rb') as fh:
@@ -210,8 +215,12 @@ class SdtFile:
     def _fromfile(self, fh: BinaryIO, /) -> None:
         """Initialize instance from open file."""
         # read file header
-        self.header = numpy.rec.fromfile(  # type: ignore
-            fh, dtype=FILE_HEADER, shape=1, byteorder='<'
+        self.header = numpy.rec.fromfile(
+            # type: ignore[call-overload]
+            fh,
+            dtype=FILE_HEADER,
+            shape=1,
+            byteorder='<',
         )[0]
         if self.header.chksum != 0x55AA and self.header.header_valid != 0x5555:
             raise ValueError('not a SDT file')
@@ -252,8 +261,12 @@ class SdtFile:
         fh.seek(self.header.meas_desc_block_offs)
         for _ in range(self.header.no_of_meas_desc_blocks):
             self.measure_info.append(
-                numpy.rec.fromfile(  # type: ignore
-                    fh, dtype=dtype, shape=1, byteorder='<'
+                numpy.rec.fromfile(
+                    # type: ignore[call-overload]
+                    fh,
+                    dtype=dtype,
+                    shape=1,
+                    byteorder='<',
                 )
             )
             fh.seek(self.header.meas_desc_block_length - dtype.itemsize, 1)
@@ -272,8 +285,12 @@ class SdtFile:
         for _ in range(self.header.no_of_data_blocks):
             # read data block header
             fh.seek(offset)
-            bh = numpy.rec.fromfile(  # type: ignore
-                fh, dtype=block_header_t, shape=1, byteorder='<'
+            bh = numpy.rec.fromfile(
+                # type: ignore[call-overload]
+                fh,
+                dtype=block_header_t,
+                shape=1,
+                byteorder='<',
             )[0]
             self.block_headers.append(bh)
             # read data block
@@ -341,19 +358,21 @@ class SdtFile:
             self.times.append(time)
             offset = bh.next_block_offs
 
-    def block_measure_info(self, block: int, /) -> numpy.recarray:
+    def block_measure_info(self, block: int, /) -> numpy.recarray[Any, Any]:
         """Return measure_info record for data block.
 
         Parameters:
             block: Block index.
 
         """
-        return self.measure_info[self.block_headers[block].meas_desc_block_no]
+        return self.measure_info[
+            int(self.block_headers[block].meas_desc_block_no)
+        ]
 
     def __enter__(self) -> SdtFile:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         pass
 
     def __repr__(self) -> str:
@@ -474,7 +493,7 @@ class BlockType:
     contents: str
     """BLOCK_CONTENT."""
 
-    dtype: numpy.dtype
+    dtype: numpy.dtype[Any]
     """BLOCK_DTYPE."""
 
     compress: bool
@@ -645,19 +664,20 @@ HIST_INFO_EXT: list[tuple[str, str]] = [
 MEASURE_INFO_EXT: list[tuple[str, str]] = [
     ('DCU_in_use', 'u4'),
     ('dcu_ser_no', '4S16'),
-    ('axio_name', 'S32'),
-    ('axio_lens_name', 'S64'),
+    ('scope_name', 'S32'),
+    ('lens_name', 'S64'),
     ('SIS_in_use', 'u4'),
     ('sis_ser_no', '4S16'),
     ('gvd_ser_no', 'S16'),
-    ('gvd_zoom_factor', 'f4'),
-    ('DCS_FOV_at_zoom_1', 'f4'),
-    ('axio_connected', 'i2'),
-    ('axio_lens_magnifier', 'f4'),
-    ('axio_FOV', 'f4'),
+    ('zoom_factor', 'f4'),
+    ('FOV_at_zoom_1', 'f4'),
+    ('scope_connected', 'i2'),
+    ('lens_magnifier', 'f4'),
+    ('image_size', 'f4'),
     ('tdc_offset', '4f4'),
     ('tdc_control', 'u4'),
-    ('reserve', 'S1250'),
+    ('scale_bar', 'u1'),
+    ('reserve', 'S1249'),
 ]
 
 # Measurement description blocks
@@ -807,7 +827,7 @@ BLOCK_CONTENT: dict[int, str] = {
 }
 
 # Data type
-BLOCK_DTYPE: dict[int, numpy.dtype] = {
+BLOCK_DTYPE: dict[int, numpy.dtype[Any]] = {
     0x000: numpy.dtype('<u2'),
     0x100: numpy.dtype('<u4'),
     0x200: numpy.dtype('<f8'),
@@ -829,7 +849,7 @@ INFO_IDS: dict[str, str] = {
 
 def struct_dtype(
     struct: list[tuple[str, str | list[tuple[str, str]]]], size: int, /
-) -> numpy.dtype:
+) -> numpy.dtype[Any]:
     """Return numpy dtype for struct not exceeding size bytes."""
     assert size > 0
     fields = len(struct)
@@ -854,7 +874,7 @@ def struct_dtype(
     return dtype
 
 
-def indent(*args) -> str:
+def indent(*args: Any) -> str:
     """Return joined string representations of objects with indented lines."""
     text = '\n'.join(str(arg) for arg in args)
     return '\n'.join(
