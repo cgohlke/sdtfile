@@ -439,13 +439,13 @@ class SetupBlock:
     """Binary data."""
     
     BHBinHDR: numpy.recarray[Any, Any]
-    """File header of type FILE_HEADER."""
+    """binary setup header of type SETUP_BIN_HDR."""
     
     SPCBinHDR: numpy.recarray[Any, Any]
-    """File header of type FILE_HEADER."""
+    """binary setup header of type SETUP_BIN_SPCHDR."""
     
     SPCBinGVDParam: numpy.recarray[Any, Any]
-    """File header of type FILE_HEADER."""
+    """binary setup block of type SETUP_BIN_GVDParam."""
     def __init__(self, value: bytes, /) -> None:
         assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
         i = value.find(b'BIN_PARA_BEGIN')
