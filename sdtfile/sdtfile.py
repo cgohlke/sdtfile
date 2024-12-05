@@ -430,20 +430,50 @@ class SetupBlock:
 
     """
 
-    __slots__ = ('ascii', 'binary')
+    __slots__ = ('ascii', 'binary','BHBinHDR','SPCBinHDR','SPCBinGVDParam')
 
     ascii: str
     """ASCII data."""
 
     binary: bytes | None
     """Binary data."""
-
+    
+    BHBinHDR: numpy.recarray[Any, Any]
+    """File header of type FILE_HEADER."""
+    
+    SPCBinHDR: numpy.recarray[Any, Any]
+    """File header of type FILE_HEADER."""
+    
+    SPCBinGVDParam: numpy.recarray[Any, Any]
+    """File header of type FILE_HEADER."""
     def __init__(self, value: bytes, /) -> None:
         assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
         i = value.find(b'BIN_PARA_BEGIN')
         if i:
             self.ascii = value[:i].decode('windows-1250')
             self.binary = value[i:]  # [i + 15 : -10]
+            startOfSetup = i+15+5 # 
+            endOfBHHDR = startOfSetup+numpy.dtype(SETUP_BIN_HDR).itemsize
+            self.BHBinHDR = numpy.rec.fromstring(
+                value[startOfSetup:endOfBHHDR],
+                dtype=SETUP_BIN_HDR,
+                shape=1,
+                byteorder='<',
+            )[0]
+            endOfSPCHDR = endOfBHHDR+numpy.dtype(SETUP_BIN_SPCHDR).itemsize
+            self.SPCBinHDR = numpy.rec.fromstring(
+                value[endOfBHHDR:endOfSPCHDR],
+                dtype=SETUP_BIN_SPCHDR,
+                shape=1,
+                byteorder='<',
+            )[0]
+            startGVDParam = self.SPCBinHDR["GVD_offs"]+startOfSetup
+            self.SPCBinGVDParam = numpy.rec.fromstring(
+                value[startGVDParam:startGVDParam+numpy.dtype(SETUP_BIN_GVDParam).itemsize],
+                dtype=SETUP_BIN_GVDParam,
+                shape=1,
+                byteorder='<',
+            )[0]
             # TODO: parse binary data here
         else:
             self.ascii = value.decode('windows-1250')
@@ -595,6 +625,72 @@ SETUP_BIN_HDR: list[tuple[str, str]] = [
     ('reserved1', 'u4'),
     ('reserved2', 'u2'),
 ]
+
+SETUP_BIN_SPCHDR: list[tuple[str, str]] = [
+    ('FCS_old_offs', 'u4'),
+    ('FCS_old_size', 'u4'),
+    ('gr1_offs', 'u4'),
+    ('gr1_size', 'u4'),
+    ('FCS_offs', 'u4'),
+    ('FCS_size', 'u4'),
+    ('FIDA_offs', 'u4'),
+    ('FIDA_size', 'u4'),
+    ('FILDA_offs', 'u4'),
+    ('FILDA_size', 'u4'),
+    ('gr2_offs', 'u4'),
+    ('gr_no', 'u2'),
+    ('hst_no', 'u2'),
+    ('hst_offs', 'u4'),
+    ('GVD_offs', 'u4'),
+    ('GVD_size', 'u2'),
+    ('FIT_offs', 'u2'),
+    ('FIT_size', 'u2'),
+    ('extdev_offs', 'u2'),
+    ('extdev_size', 'u2'),
+    ('binhdrext_offs', 'u4'),
+    ('binhdrext_size', 'u2'),
+]
+
+SETUP_BIN_GVDdata: list[tuple[str, str]] = [
+    ('active', 'i2'),
+    ('frame_size', 'u2'),
+    ('lasers_active', 'i2'),
+    ('multiplex', 'u2'),
+    ('limit_scan', 'i2'),
+    ('frame_counter', 'u2'),
+    ('scan_polarity', 'u2'),
+    ('scan_type', 'i2'),
+    ('line_time', 'f4'),
+    ('zoom_factor', 'f4'),
+    ('offset_x', 'f4'),
+    ('offset_y', 'f4'),
+    ('park_offs_x', 'f4'),
+    ('park_offs_y', 'f4'),
+    ('l1_power', 'f4'),
+    ('l2_power', 'f4'),
+    ('rect_zoom_x', 'f4'),
+    ('rect_zoom_y', 'f4'),
+    ('scan_rate', 'i2'),
+    ('park_center', 'i2'),
+    ('scan_trigger', 'i2'),
+    ('l3_power', 'f4'),
+    ('l4_power', 'f4'),
+    ('multiplex2', 'u2'),
+    ('multiplex3', 'u2'),
+    ('lasers_active1_4', 'u2'),
+    ('control2', 'u2'),
+    ('sreserve', 'i2'),
+]
+
+SETUP_BIN_GVDParam: list[tuple[str, str]] = [
+    ('active', 'i4'),
+    ('dcs_and_beam_blank', 'u4'),
+    ('gvd_data', SETUP_BIN_GVDdata),
+    ('DAC_per_step', 'u2'),
+    ('line_pulse_shift', 'i2'),
+    #omitted BHPanelAttr here
+]
+
 
 # Info collected when measurement finished
 MEASURE_STOP_INFO: list[tuple[str, str]] = [
