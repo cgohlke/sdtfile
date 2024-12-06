@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.11.24
+:Version: 2024.12.6
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,19 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1
 - `Numpy <https://pypi.org/project/numpy/>`_ 2.1.3
 
 Revisions
 ---------
+
+2024.12.6
+
+- Fix read MeasureInfo fields as scalars (breaking).
+- Update some structure field names with BH reference (breaking).
+- Parse some SetupBlock binary structures (#7).
+- Include more information in str(SdtFile).
+- Add subtype to FileRevision.
 
 2024.11.24
 
@@ -85,7 +93,7 @@ Read image and metadata from a "SPC Setup & Data File":
     588
     >>> sdt.info.id[1:-1]
     'SPC Setup & Data File'
-    >>> int(sdt.measure_info[0].scan_x[0])
+    >>> int(sdt.measure_info[0].scan_x)
     128
     >>> len(sdt.data)
     1
@@ -105,6 +113,8 @@ Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
     (1, 1024)
     >>> sdt.times[3].shape
     (1024,)
+    >>> int(sdt.setup.bh_bin_hdr['soft_rev'])
+    850
 
 Read image data from a "SPC FCS Data File" as numpy array:
 
