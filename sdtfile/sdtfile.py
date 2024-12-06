@@ -467,13 +467,14 @@ class SetupBlock:
                 shape=1,
                 byteorder='<',
             )[0]
-            startGVDParam = self.SPCBinHDR["GVD_offs"]+startOfSetup
-            self.SPCBinGVDParam = numpy.rec.fromstring(
-                value[startGVDParam:startGVDParam+numpy.dtype(SETUP_BIN_GVDParam).itemsize],
-                dtype=SETUP_BIN_GVDParam,
-                shape=1,
-                byteorder='<',
-            )[0]
+            if (self.BHBinHDR['soft_rev'] in [985,988]):
+                startGVDParam = self.SPCBinHDR["GVD_offs"]+startOfSetup
+                self.SPCBinGVDParam = numpy.rec.fromstring(
+                    value[startGVDParam:startGVDParam+self.SPCBinHDR["GVD_size"]],
+                    dtype=SETUP_BIN_GVDParam,
+                    shape=1,
+                    byteorder='<',
+                )[0]
             # TODO: parse binary data here
         else:
             self.ascii = value.decode('windows-1250')
@@ -651,6 +652,20 @@ SETUP_BIN_SPCHDR: list[tuple[str, str]] = [
     ('binhdrext_size', 'u2'),
 ]
 
+SETUP_BIN_BHPanelAttr: list[tuple[str, str]] = [
+    ('top', 'i4'),
+    ('left', 'i4'),
+    ('height', 'i4'),
+    ('width', 'i4'),
+    ('flags', 'i4'),
+]
+
+SETUP_BIN_BHPanelData: list[tuple[str, str]] = [
+    ('status', 'i4'),
+    ('name', 'S20'),
+    ('data', SETUP_BIN_BHPanelAttr),
+]
+
 SETUP_BIN_GVDdata: list[tuple[str, str]] = [
     ('active', 'i2'),
     ('frame_size', 'u2'),
@@ -688,7 +703,7 @@ SETUP_BIN_GVDParam: list[tuple[str, str]] = [
     ('gvd_data', SETUP_BIN_GVDdata),
     ('DAC_per_step', 'u2'),
     ('line_pulse_shift', 'i2'),
-    #omitted BHPanelAttr here
+    ('pnl_attr',SETUP_BIN_BHPanelAttr)
 ]
 
 
