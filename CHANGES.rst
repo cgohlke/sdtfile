@@ -1,6 +1,14 @@
 Revisions
 ---------
 
+2024.12.6
+
+- Fix read MeasureInfo fields as scalars (breaking).
+- Update some structure field names with BH reference (breaking).
+- Parse some SetupBlock binary structures (#7).
+- Include more information in str(SdtFile).
+- Add subtype to FileRevision.
+
 2024.11.24
 
 - Update MEASURE_INFO_EXT struct to SPCM v.9.9 (breaking).
