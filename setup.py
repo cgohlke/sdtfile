@@ -8,7 +8,7 @@ import sys
 from setuptools import setup
 
 
-def search(pattern, string, flags=0):
+def search(pattern: str, string: str, flags: int = 0) -> str:
     """Return first match of pattern in string."""
     match = re.search(pattern, string, flags)
     if match is None:
@@ -16,7 +16,7 @@ def search(pattern, string, flags=0):
     return match.groups()[0]
 
 
-def fix_docstring_examples(docstring):
+def fix_docstring_examples(docstring: str) -> str:
     """Return docstring with examples fixed for GitHub."""
     start = True
     indent = False
@@ -84,7 +84,7 @@ if 'sdist' in sys.argv:
 setup(
     name='sdtfile',
     version=version,
-    license='BSD',
+    license='BSD-3-Clause',
     description=description,
     long_description=readme,
     long_description_content_type='text/x-rst',
@@ -99,12 +99,11 @@ setup(
     entry_points={'console_scripts': ['sdt2dat = sdtfile.sdt2dat:main']},
     packages=['sdtfile'],
     package_data={'sdtfile': ['py.typed']},
-    python_requires='>=3.9',
+    python_requires='>=3.10',
     install_requires=['numpy'],
     platforms=['any'],
     classifiers=[
         'Development Status :: 4 - Beta',
-        'License :: OSI Approved :: BSD License',
         'Intended Audience :: Science/Research',
         'Intended Audience :: Developers',
         'Operating System :: OS Independent',
