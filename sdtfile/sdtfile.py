@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2024, Christoph Gohlke
+# Copyright (c) 2007-2025, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.12.6
+:Version: 2025.3.25
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,16 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1
-- `Numpy <https://pypi.org/project/numpy/>`_ 2.1.3
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
+- `NumPy <https://pypi.org/project/numpy/>`_ 2.2.4
 
 Revisions
 ---------
+
+2025.3.25
+
+- Fix shape of data with routing channels.
+- Drop support for Python 3.9, support Python 3.13.
 
 2024.12.6
 
@@ -155,7 +160,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2024.12.6'
+__version__ = '2025.3.25'
 
 __all__ = [
     '__version__',
@@ -242,7 +247,7 @@ class SdtFile:
         if self.header.no_of_data_blocks == 0x7FFF:
             self.header.no_of_data_blocks = self.header.reserved1
         elif self.header.no_of_data_blocks > 0x7FFF:
-            raise ValueError('')
+            raise ValueError(f'{self.header.no_of_data_blocks=} > {0x7FFF}')
 
         # read file info
         fh.seek(self.header.info_offs)
@@ -342,6 +347,20 @@ class SdtFile:
             except AttributeError:
                 image_x = 0
                 image_y = 0
+
+            try:
+                scan_rx = int(mi.scan_rx)
+                scan_ry = int(mi.scan_ry)
+            except AttributeError:
+                scan_rx = 0
+                scan_ry = 0
+            try:
+                image_rx = int(mi.image_rx)
+                image_ry = int(mi.image_ry)
+            except AttributeError:
+                image_rx = 0
+                image_ry = 0
+
             try:
                 mcs_points = mi.MeasHISTInfo.mcs_points
             except AttributeError:
@@ -353,10 +372,25 @@ class SdtFile:
 
             if adc_re == 0:
                 adc_re = 65536
+
             if dsize == scan_x * scan_y * adc_re:
                 data = data.reshape(scan_y, scan_x, adc_re)
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape(image_y, image_x, adc_re)
+            elif dsize == scan_x * scan_y * scan_rx * scan_ry * adc_re:
+                data = data.reshape(scan_ry, scan_rx, scan_y, scan_x, adc_re)
+                if scan_rx == 1:
+                    data = data[:, 0]
+                if scan_ry == 1:
+                    data = data[0]
+            elif dsize == image_x * image_y * image_rx * image_ry * adc_re:
+                data = data.reshape(
+                    image_ry, image_rx, image_y, image_x, adc_re
+                )
+                if image_rx == 1:
+                    data = data[:, 0]
+                if image_ry == 1:
+                    data = data[0]
             elif dsize == mcs_points:
                 data = data.reshape(-1, dsize)
             else:
