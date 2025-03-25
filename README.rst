@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.12.6
+:Version: 2025.3.25
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,16 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1
-- `Numpy <https://pypi.org/project/numpy/>`_ 2.1.3
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
+- `NumPy <https://pypi.org/project/numpy/>`_ 2.2.4
 
 Revisions
 ---------
+
+2025.3.25
+
+- Fix shape of data with routing channels.
+- Drop support for Python 3.9, support Python 3.13.
 
 2024.12.6
 
