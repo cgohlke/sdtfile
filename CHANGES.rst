@@ -1,6 +1,11 @@
 Revisions
 ---------
 
+2025.3.25
+
+- Fix shape of data with routing channels.
+- Drop support for Python 3.9, support Python 3.13.
+
 2024.12.6
 
 - Fix read MeasureInfo fields as scalars (breaking).
