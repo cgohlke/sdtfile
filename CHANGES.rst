@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2025.5.10
+
+- Support Python 3.14.
+
 2025.3.25
 
 - Fix shape of data with routing channels.
