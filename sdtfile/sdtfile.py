@@ -40,8 +40,8 @@ instrumentation parameters and measurement data. Currently only the
 equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
-:License: BSD 3-Clause
-:Version: 2025.3.25
+:License: BSD-3-Clause
+:Version: 2025.5.10
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
-- `NumPy <https://pypi.org/project/numpy/>`_ 2.2.4
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
+- `NumPy <https://pypi.org/project/numpy/>`_ 2.2.5
 
 Revisions
 ---------
+
+2025.5.10
+
+- Support Python 3.14.
 
 2025.3.25
 
@@ -160,7 +164,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2025.3.25'
+__version__ = '2025.5.10'
 
 __all__ = [
     '__version__',
@@ -173,6 +177,7 @@ __all__ = [
 ]
 
 import io
+import logging
 import os
 import struct
 import zipfile
@@ -576,7 +581,7 @@ class SetupBlock:
             dtype_ = numpy.dtype(dtype)
             if dtype_.itemsize != size:
                 if warn:
-                    log_warning(
+                    logger().warning(
                         f'{name}_size={size} does not match '
                         f'structure size={dtype_.itemsize}'
                     )
@@ -1191,7 +1196,7 @@ def record_dtype(
         fields -= 1
         dtype = numpy.dtype(record[:fields])
     # if dtype.itemsize != size:
-    #    log_warning(f'record size {dtype.itemsize} != {size}')
+    #    logger().warning(f'record size {dtype.itemsize} != {size}')
     return dtype
 
 
@@ -1257,11 +1262,9 @@ def stripnull(
     return string[: i + 1]
 
 
-def log_warning(msg: object, *args: object, **kwargs: Any) -> None:
-    """Log message with level WARNING."""
-    import logging
-
-    logging.getLogger(__name__).warning(msg, *args, **kwargs)
+def logger() -> logging.Logger:
+    """Return logger for sdtfile module."""
+    return logging.getLogger('sdtfile')
 
 
 if __name__ == '__main__':
