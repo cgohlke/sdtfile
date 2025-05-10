@@ -64,7 +64,7 @@ if 'sdist' in sys.argv:
     license = license.replace('# ', '').replace('#', '')
 
     with open('LICENSE', 'w', encoding='utf-8') as fh:
-        fh.write('BSD 3-Clause License\n\n')
+        fh.write('BSD-3-Clause license\n\n')
         fh.write(license)
 
     revisions = search(
@@ -112,5 +112,6 @@ setup(
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
         'Programming Language :: Python :: 3.13',
+        'Programming Language :: Python :: 3.14',
     ],
 )
