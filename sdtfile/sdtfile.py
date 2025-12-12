@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.5.10
+:Version: 2025.12.12
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,16 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
-- `NumPy <https://pypi.org/project/numpy/>`_ 2.2.5
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11 3.14.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
 
 Revisions
 ---------
+
+2025.12.12
+
+- Add new SPC modules and MEASURE_INFO_EXT fields.
+- Drop support for Python 3.10.
 
 2025.5.10
 
@@ -164,16 +169,16 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2025.5.10'
+__version__ = '2025.12.12'
 
 __all__ = [
-    '__version__',
-    'SdtFile',
-    'FileInfo',
-    'SetupBlock',
     'BlockNo',
     'BlockType',
+    'FileInfo',
     'FileRevision',
+    'SdtFile',
+    'SetupBlock',
+    '__version__',
 ]
 
 import io
@@ -186,7 +191,8 @@ from typing import TYPE_CHECKING
 import numpy
 
 if TYPE_CHECKING:
-    from typing import Any, BinaryIO
+    from types import TracebackType
+    from typing import Any, BinaryIO, Self
 
     from numpy.typing import NDArray
 
@@ -423,10 +429,15 @@ class SdtFile:
             int(self.block_headers[block].meas_desc_block_no)
         ]
 
-    def __enter__(self) -> SdtFile:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         pass
 
     def __repr__(self) -> str:
@@ -457,7 +468,7 @@ class SdtFile:
         )
 
 
-class FileInfo(str):
+class FileInfo(str):  # noqa: SLOT000
     """File info string and attributes.
 
     Parameters:
@@ -470,14 +481,13 @@ class FileInfo(str):
 
     def __init__(self, value: str, /) -> None:
         str.__init__(self)
-        assert value.startswith('*IDENTIFICATION') and value.strip().endswith(
-            '*END'
-        )
+        assert value.startswith('*IDENTIFICATION')
+        assert value.strip().endswith('*END')
 
         for line in value.splitlines()[1:-1]:
             try:
                 key, val = line.split(':', 1)
-            except Exception:
+            except ValueError:
                 pass
             else:
                 setattr(self, key.strip().lower(), val.strip())
@@ -507,7 +517,8 @@ class SetupBlock:
     """Offset of structures in binary."""
 
     def __init__(self, value: bytes, /) -> None:
-        assert value.startswith(b'*SETUP') and value.strip().endswith(b'*END')
+        assert value.startswith(b'*SETUP')
+        assert value.strip().endswith(b'*END')
 
         self.ascii = ''
         self.binary = b''
@@ -554,6 +565,7 @@ class SetupBlock:
         name: str,
         dtype: Record | Record1 | Record2,
         /,
+        *,
         truncate: bool = True,
         warn: bool = False,
     ) -> numpy.recarray[Any, Any] | None:
@@ -677,7 +689,7 @@ class BlockType:
 
     """
 
-    __slots__ = ('mode', 'contents', 'dtype', 'compress')
+    __slots__ = ('compress', 'contents', 'dtype', 'mode')
 
     mode: str
     """BLOCK_CREATION."""
@@ -718,7 +730,7 @@ class FileRevision:
 
     """
 
-    __slots__ = ('revision', 'module', 'subtype')
+    __slots__ = ('module', 'revision', 'subtype')
 
     revision: int
     """Software revision."""
@@ -758,6 +770,8 @@ class FileRevision:
             0x8A: 'SPC-130INXX',
             0x8B: 'SPC-QC-104',
             0x8C: 'SPC-QC-004',
+            0x8D: 'SPC-QC-106',
+            0x8E: 'SPC-QC-004',
         }.get((value & 0xFF0) >> 4, 'Unknown')
         self.subtype = {
             0x0: 'None',
@@ -999,7 +1013,12 @@ MEASURE_INFO_EXT: Record = [
     ('tdc_offset', '4f4'),
     ('tdc_control', 'u4'),
     ('scale_bar', 'u1'),
-    ('reserve', 'S1249'),
+    ('tdc_offset106', '2f4'),
+    ('cfd_th5_tdc', 'f4'),
+    ('cfd_th6_tdc', 'f4'),
+    ('cfd_zc5_tdc', 'f4'),
+    ('cfd_zc6_tdc', 'f4'),
+    ('reserve', 'S1225'),
 ]
 
 
@@ -1268,9 +1287,6 @@ def logger() -> logging.Logger:
 
 
 if __name__ == '__main__':
-    import doctest
-
-    doctest.testmod()
 
     assert numpy.dtype(FILE_HEADER).itemsize == 42  # BH_HDR_LENGTH
     assert numpy.dtype(MEASURE_INFO).itemsize == 2048
