@@ -1,6 +1,11 @@
 Revisions
 ---------
 
+2025.12.12
+
+- Add new SPC modules and MEASURE_INFO_EXT fields.
+- Drop support for Python 3.10.
+
 2025.5.10
 
 - Support Python 3.14.
