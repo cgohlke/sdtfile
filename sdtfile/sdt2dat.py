@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # sdtfile/sdt2dat.py
 
-# Copyright (c) 2020-2023, Christoph Gohlke
+# Copyright (c) 2020-2025, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -56,7 +56,7 @@ click libraries, which can be installed with::
 
 """
 
-__version__ = '2023.8.30'
+__version__ = '2025.12.12'
 
 import math
 import os
@@ -103,15 +103,21 @@ def globalsdat_write(
     step = 1e3 / (len(decay) + 1) / frequency
     with open(filename, 'w', encoding='ascii') as fh:
         fh.write(f'{step:8.5f}    {start}     {stop}\n')
-        for d, r in zip(decay.astype('int64'), reference.astype('int64')):
-            fh.write(f'{int(r)}   {int(d)}\n')
+        fh.writelines(
+            f'{int(r)}   {int(d)}\n'
+            for d, r in zip(
+                decay.astype(numpy.int64),
+                reference.astype(numpy.int64),
+                strict=True,
+            )
+        )
 
 
 def phasor_from_lifetimes(
-    lifetimes, frequency, fractions=None, isamplitude=True
+    lifetimes, frequency, fractions=None, *, isamplitude=True
 ):
     """Return phasor coordinates (g, s) from lifetime distribution."""
-    omgtau = numpy.array(frequency, dtype='float64', copy=True)
+    omgtau = numpy.array(frequency, dtype=numpy.float64, copy=True)
     try:
         lifetimes[1]
     except (TypeError, IndexError):
@@ -121,10 +127,10 @@ def phasor_from_lifetimes(
         s = omgtau * g
         return g, s
     # multiple components
-    tau = numpy.array(lifetimes, dtype='float64', copy=False)
+    tau = numpy.array(lifetimes, dtype=numpy.float64, copy=False)
     if fractions is None:
         fractions = [1.0 / tau.shape[0]] * tau.shape[0]
-    frac = numpy.array(fractions, dtype='float64', copy=True)
+    frac = numpy.array(fractions, dtype=numpy.float64, copy=True)
     if isamplitude:
         # preexponential amplitudes to fractional intensities
         frac = tau * frac
@@ -146,7 +152,7 @@ def phasor_from_signal(
     signal, zero=None, background=None, start=None, stop=None
 ):
     """Return phasor coordinates (g, s) from evenly sampled signal."""
-    f = numpy.array(signal, dtype='float64', copy=True)
+    f = numpy.array(signal, dtype=numpy.float64, copy=True)
     if background is not None:
         f -= background
     shape = f.shape[1:]
@@ -156,7 +162,7 @@ def phasor_from_signal(
     if f.shape[0] < 3:
         raise ValueError('minimum of 3 samples required')
     f = f.reshape(f.shape[0], -1)
-    t = numpy.arange(f.shape[0], dtype='float64').reshape(-1, 1)
+    t = numpy.arange(f.shape[0], dtype=numpy.float64).reshape(-1, 1)
     t *= 2.0 * math.pi / samples
     g = numpy.mean(f * numpy.cos(t), axis=0).reshape(shape)
     s = numpy.mean(f * numpy.sin(t), axis=0).reshape(shape)
@@ -171,7 +177,7 @@ def phasor_from_signal(
 
 def universial_circle(samples=65):
     """Return phasor coordinates (g, s) of universal half circle."""
-    t = numpy.arange(0.0, samples, 1.0, dtype='float64')
+    t = numpy.arange(0.0, samples, 1.0, dtype=numpy.float64)
     t *= math.pi / (samples - 1)
     real = 0.5 * (numpy.cos(t) + 1.0)
     imag = 0.5 * numpy.sin(t)
@@ -233,6 +239,7 @@ def analyze(
     background=0,
     startstop=(None, None),
     highlight=None,
+    *,
     convert=True,
     plot=True,
     axes=None,
@@ -262,7 +269,7 @@ def analyze(
     # print results
     print(f'Frequency {frequency:.3f} MHz')
     filenames = [os.path.split(f)[-1] for f in filenames]
-    for name, g, s in zip(filenames, *phasors):
+    for name, g, s in zip(filenames, *phasors, strict=True):
         print(f'{name.rjust(32)} {g:.4f}, {s:.4f}')
 
     if convert:
@@ -301,7 +308,7 @@ def analyze(
             stop=stop,
             ax=axes[0],
         )
-        phasor_plot(*phasors, frequency, highlight=highlight, ax=axes[1])
+        phasor_plot(phasors[0], phasors[1], frequency, highlight, axes[1])
         if fig is not None:
             pyplot.show()
 
@@ -346,7 +353,7 @@ def main():
         default=None,
         type=float,
         required=False,
-        help='Reference lifetime in ns.',
+        help='Laser frequency in MHz.',
     )
     @click.option(
         '-b', '--background', default=0, type=int, help='Background counts.'
@@ -401,14 +408,16 @@ def main():
                 background,
                 startstop,
                 highlight,
-                convert,
-                plot,
+                convert=convert,
+                plot=plot,
             )
         else:
             raise click.UsageError('missing FILES')
 
-    run()  # pylint: disable=no-value-for-parameter
+    run()
 
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# mypy: allow-untyped-defs, allow-untyped-calls
