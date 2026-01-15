@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.12.12
+:Version: 2026.1.14
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
 
 Revisions
 ---------
+
+2026.1.14
+
+- Improve code quality.
 
 2025.12.12
 
@@ -65,23 +69,6 @@ Revisions
 - Add subtype to FileRevision.
 
 2024.11.24
-
-- Update MEASURE_INFO_EXT struct to SPCM v.9.9 (breaking).
-
-2024.5.24
-
-- Fix docstring examples not correctly rendered on GitHub.
-
-2024.4.24
-
-- Support NumPy 2.
-
-2023.9.28
-
-- Update structs to SPCM v.9.66 (breaking).
-- Shorten MEASURE_INFO struct to meas_desc_block_length.
-
-2023.8.30
 
 - …
 
