@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # sdtfile/sdt2dat.py
 
-# Copyright (c) 2020-2025, Christoph Gohlke
+# Copyright (c) 2020-2026, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -56,8 +56,6 @@ click libraries, which can be installed with::
 
 """
 
-__version__ = '2025.12.12'
-
 import math
 import os
 import sys
@@ -76,7 +74,8 @@ def sdtread(filename):
             bh = sdt.block_headers[i]
             if BlockType(bh.block_type).contents == 'DECAY_BLOCK':
                 return sdt.data[i].squeeze(), sdt.times[i].squeeze()
-        raise TypeError('SDT file does not contain any DECAY_BLOCK')
+        msg = 'SDT file does not contain any DECAY_BLOCK'
+        raise TypeError(msg)
 
 
 def tsvwrite(filename, labels, *args):
@@ -96,9 +95,8 @@ def globalsdat_write(
     decay = numpy.squeeze(decay)
     reference = numpy.squeeze(reference)
     if decay.ndim != 1 or decay.shape != reference.shape:
-        raise ValueError(
-            'decay and reference must be 1D arrays of same length'
-        )
+        msg = 'decay and reference must be 1D arrays of same length'
+        raise ValueError(msg)
     start, stop = slice(start, stop).indices(len(decay))[:2]
     step = 1e3 / (len(decay) + 1) / frequency
     with open(filename, 'w', encoding='ascii') as fh:
@@ -160,8 +158,9 @@ def phasor_from_signal(
     start, stop = slice(start, stop).indices(samples)[:2]
     f = f[start:stop]
     if f.shape[0] < 3:
-        raise ValueError('minimum of 3 samples required')
-    f = f.reshape(f.shape[0], -1)
+        msg = 'minimum of 3 samples required'
+        raise ValueError(msg)
+    f = f.reshape((f.shape[0], -1))
     t = numpy.arange(f.shape[0], dtype=numpy.float64).reshape(-1, 1)
     t *= 2.0 * math.pi / samples
     g = numpy.mean(f * numpy.cos(t), axis=0).reshape(shape)
@@ -175,7 +174,7 @@ def phasor_from_signal(
     return g, s
 
 
-def universial_circle(samples=65):
+def universal_circle(samples=65):
     """Return phasor coordinates (g, s) of universal half circle."""
     t = numpy.arange(0.0, samples, 1.0, dtype=numpy.float64)
     t *= math.pi / (samples - 1)
@@ -191,7 +190,7 @@ def phasor_plot(real, imag, frequency, highlight=0, ax=None):
     fig, ax = pyplot.subplots() if ax is None else None, ax
     ax.axis('equal')
     ax.set(title=f'Phasor Plot ({frequency:.2f} MHz)', xlabel='G', ylabel='S')
-    ax.plot(*universial_circle(), color='k', lw=0.25)
+    ax.plot(*universal_circle(), color='k', lw=0.25)
     ax.scatter(real, imag, color='#1f77b4', alpha=0.5)
     ax.scatter(
         real[highlight], imag[highlight], marker='X', color='#d62728', lw=1.0
@@ -267,10 +266,9 @@ def analyze(
     )
 
     # print results
-    print(f'Frequency {frequency:.3f} MHz')
     filenames = [os.path.split(f)[-1] for f in filenames]
-    for name, g, s in zip(filenames, *phasors, strict=True):
-        print(f'{name.rjust(32)} {g:.4f}, {s:.4f}')
+    for _name, _g, _s in zip(filenames, *phasors, strict=True):
+        pass
 
     if convert:
         # save results to files
@@ -328,6 +326,8 @@ def askopenfilename(**kwargs):
 def main():
     """Command line usage main function."""
     import click
+
+    from sdtfile import __version__
 
     @click.version_option(version=__version__)
     @click.command(
@@ -412,7 +412,8 @@ def main():
                 plot=plot,
             )
         else:
-            raise click.UsageError('missing FILES')
+            msg = 'missing FILES'
+            raise click.UsageError(msg)
 
     run()
 
