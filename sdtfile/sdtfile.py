@@ -1,6 +1,6 @@
 # sdtfile.py
 
-# Copyright (c) 2007-2025, Christoph Gohlke
+# Copyright (c) 2007-2026, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.12.12
+:Version: 2026.1.14
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
 
 Revisions
 ---------
+
+2026.1.14
+
+- Improve code quality.
 
 2025.12.12
 
@@ -92,23 +96,6 @@ Revisions
 - Add subtype to FileRevision.
 
 2024.11.24
-
-- Update MEASURE_INFO_EXT struct to SPCM v.9.9 (breaking).
-
-2024.5.24
-
-- Fix docstring examples not correctly rendered on GitHub.
-
-2024.4.24
-
-- Support NumPy 2.
-
-2023.9.28
-
-- Update structs to SPCM v.9.66 (breaking).
-- Shorten MEASURE_INFO struct to meas_desc_block_length.
-
-2023.8.30
 
 - …
 
@@ -169,7 +156,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2025.12.12'
+__version__ = '2026.1.14'
 
 __all__ = [
     'BlockNo',
@@ -254,11 +241,13 @@ class SdtFile:
             byteorder='<',
         )[0]
         if self.header.chksum != 0x55AA and self.header.header_valid != 0x5555:
-            raise ValueError('not a SDT file')
+            msg = 'not an SDT file'
+            raise ValueError(msg)
         if self.header.no_of_data_blocks == 0x7FFF:
             self.header.no_of_data_blocks = self.header.reserved1
         elif self.header.no_of_data_blocks > 0x7FFF:
-            raise ValueError(f'{self.header.no_of_data_blocks=} > {0x7FFF}')
+            msg = f'{self.header.no_of_data_blocks=} > {0x7FFF}'
+            raise ValueError(msg)
 
         # read file info
         fh.seek(self.header.info_offs)
@@ -272,9 +261,11 @@ class SdtFile:
                 'SPC DLL Data File',
                 'SPC Setup & Data File',  # corrupted?
             ):
-                raise NotImplementedError(f'{self.info.id!r} not supported')
+                msg = f'{self.info.id!r} not supported'
+                raise NotImplementedError(msg)
         except AttributeError as exc:
-            raise ValueError('invalid SDT file info\n', self.info) from exc
+            msg = 'invalid SDT file info\n'
+            raise ValueError(msg, self.info) from exc
 
         # read setup block
         if self.header.setup_length:
@@ -385,27 +376,27 @@ class SdtFile:
                 adc_re = 65536
 
             if dsize == scan_x * scan_y * adc_re:
-                data = data.reshape(scan_y, scan_x, adc_re)
+                data = data.reshape((scan_y, scan_x, adc_re))
             elif dsize == image_x * image_y * adc_re:
-                data = data.reshape(image_y, image_x, adc_re)
+                data = data.reshape((image_y, image_x, adc_re))
             elif dsize == scan_x * scan_y * scan_rx * scan_ry * adc_re:
-                data = data.reshape(scan_ry, scan_rx, scan_y, scan_x, adc_re)
+                data = data.reshape((scan_ry, scan_rx, scan_y, scan_x, adc_re))
                 if scan_rx == 1:
                     data = data[:, 0]
                 if scan_ry == 1:
                     data = data[0]
             elif dsize == image_x * image_y * image_rx * image_ry * adc_re:
                 data = data.reshape(
-                    image_ry, image_rx, image_y, image_x, adc_re
+                    (image_ry, image_rx, image_y, image_x, adc_re)
                 )
                 if image_rx == 1:
                     data = data[:, 0]
                 if image_ry == 1:
                     data = data[0]
             elif dsize == mcs_points:
-                data = data.reshape(-1, dsize)
+                data = data.reshape((-1, dsize))
             else:
-                data = data.reshape(-1, adc_re)
+                data = data.reshape((-1, adc_re))
             self.data.append(data)
 
             if bt.contents == 'MCS_BLOCK' and mcs_time != 0:
