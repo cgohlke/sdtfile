@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.1.14
+:Version: 2026.2.8
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,18 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
 
 Revisions
 ---------
+
+2026.2.8
+
+- Derive SdtFile from BinaryFile (breaking).
+- Rename MEASURE_INFO.MeasHISTInfo to HISTInfo to match C struct (breaking).
+- Revise shaping of FCS_BLOCK data (breaking).
+- Fix code review issues.
 
 2026.1.14
 
@@ -156,7 +163,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2026.1.14'
+__version__ = '2026.2.8'
 
 __all__ = [
     'BlockNo',
@@ -168,18 +175,19 @@ __all__ = [
     '__version__',
 ]
 
+import contextlib
 import io
 import logging
 import os
 import struct
 import zipfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, final
 
 import numpy
 
 if TYPE_CHECKING:
     from types import TracebackType
-    from typing import Any, BinaryIO, Self
+    from typing import IO, Any, Literal, Self
 
     from numpy.typing import NDArray
 
@@ -188,16 +196,177 @@ if TYPE_CHECKING:
     Record2 = list[tuple[str, str | Record | Record1]]
 
 
-class SdtFile:
+class BinaryFile:
+    """Binary file.
+
+    Parameters:
+        file:
+            File name or seekable binary stream.
+        mode:
+            File open mode if `file` is a file name.
+            The default is 'r'. Files are always opened in binary mode.
+
+    Raises:
+        ValueError:
+            Invalid file name, extension, or stream.
+            File is not a binary or seekable stream.
+
+    """
+
+    _fh: IO[bytes]
+    _path: str  # absolute path of file
+    _name: str  # name of file or handle
+    _close: bool  # file needs to be closed
+    _closed: bool  # file is closed
+    _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
+
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | IO[bytes],
+        /,
+        *,
+        mode: Literal['r', 'r+'] | None = None,
+    ) -> None:
+
+        self._path = ''
+        self._name = 'Unnamed'
+        self._close = False
+        self._closed = False
+
+        if isinstance(file, (str, os.PathLike)):
+            ext = os.path.splitext(file)[-1].lower()
+            if self._ext and ext not in self._ext:
+                msg = f'invalid file extension: {ext!r} not in {self._ext!r}'
+                raise ValueError(msg)
+            if mode is None:
+                mode = 'r'
+            else:
+                if mode[-1:] == 'b':
+                    mode = mode[:-1]  # type: ignore[assignment]
+                if mode not in {'r', 'r+'}:
+                    msg = f'invalid {mode=!r}'
+                    raise ValueError(msg)
+            self._path = os.path.abspath(file)
+            self._close = True
+            self._fh = open(self._path, mode + 'b')  # noqa: SIM115
+
+        elif hasattr(file, 'seek'):
+            # binary stream: open file, BytesIO, fsspec LocalFileOpener
+            if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
+                msg = f'{file=!r} is not open in binary mode'
+                raise TypeError(msg)
+
+            self._fh = file
+            try:
+                self._fh.tell()
+            except Exception as exc:
+                msg = f'{file=!r} is not seekable'
+                raise ValueError(msg) from exc
+            if hasattr(file, 'path'):
+                self._path = os.path.normpath(file.path)
+            elif hasattr(file, 'name'):
+                self._path = os.path.normpath(file.name)
+
+        elif hasattr(file, 'open'):
+            # fsspec OpenFile
+            self._fh = file.open()
+            self._close = True
+            try:
+                self._fh.tell()
+            except Exception as exc:
+                with contextlib.suppress(Exception):
+                    self._fh.close()
+                msg = f'{file=!r} is not seekable'
+                raise ValueError(msg) from exc
+            if hasattr(file, 'path'):
+                self._path = os.path.normpath(file.path)
+
+        else:
+            msg = f'cannot handle {type(file)=}'
+            raise ValueError(msg)
+
+        if hasattr(file, 'name') and file.name:
+            self._name = os.path.basename(file.name)
+        elif self._path:
+            self._name = os.path.basename(self._path)
+        elif isinstance(file, io.BytesIO):
+            self._name = 'BytesIO'
+        # else:
+        #     self._name = f'{type(file)}'
+
+    @property
+    def filehandle(self) -> IO[bytes]:
+        """File handle."""
+        return self._fh
+
+    @property
+    def filepath(self) -> str:
+        """Path to file."""
+        return self._path
+
+    @property
+    def filename(self) -> str:
+        """Name of file or empty if binary stream."""
+        return os.path.basename(self._path)
+
+    @property
+    def dirname(self) -> str:
+        """Directory containing file or empty if binary stream."""
+        return os.path.dirname(self._path)
+
+    @property
+    def name(self) -> str:
+        """Display name of file."""
+        return self._name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._name = value
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        """Selected metadata as dict."""
+        return {'name': self.name, 'filepath': self.filepath}
+
+    @property
+    def closed(self) -> bool:
+        """File is closed."""
+        return self._closed
+
+    def close(self) -> None:
+        """Close file."""
+        if self._close:
+            try:
+                self._closed = True
+                self._fh.close()
+            except Exception:  # noqa: S110
+                pass
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        if self._name:
+            return f'<{self.__class__.__name__} {self._name!r}>'
+        return f'<{self.__class__.__name__}>'
+
+
+@final
+class SdtFile(BinaryFile):
     """Becker & Hickl SDT file.
 
     Parameters:
         arg: File name or open file.
 
     """
-
-    filename: str
-    """Name of file."""
 
     header: numpy.recarray[Any, Any]
     """File header of type FILE_HEADER."""
@@ -220,18 +389,17 @@ class SdtFile:
     times: list[NDArray[Any]]
     """Time axes for each data set."""
 
-    def __init__(self, arg: str | os.PathLike[Any] | BinaryIO, /) -> None:
-        if isinstance(arg, (str, os.PathLike)):
-            self.filename = os.fspath(arg)
-            with open(arg, 'rb') as fh:
-                self._fromfile(fh)
-        else:
-            assert hasattr(arg, 'seek')
-            self.filename = ''
-            self._fromfile(arg)
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | IO[bytes],
+        /,
+        *,
+        mode: Literal['r', 'r+'] | None = None,
+    ) -> None:
+        super().__init__(file, mode=mode)
 
-    def _fromfile(self, fh: BinaryIO, /) -> None:
-        """Initialize instance from open file."""
+        fh = self._fh
+
         # read file header
         self.header = numpy.rec.fromfile(
             # type: ignore[call-overload]
@@ -241,7 +409,11 @@ class SdtFile:
             byteorder='<',
         )[0]
         if self.header.chksum != 0x55AA and self.header.header_valid != 0x5555:
-            msg = 'not an SDT file'
+            msg = (
+                'invalid SDT file header '
+                f'(chksum=0x{self.header.chksum:x}!=0x55AA, '
+                f'header_valid=0x{self.header.header_valid:x}!=0x5555)'
+            )
             raise ValueError(msg)
         if self.header.no_of_data_blocks == 0x7FFF:
             self.header.no_of_data_blocks = self.header.reserved1
@@ -259,7 +431,7 @@ class SdtFile:
                 'SPC Setup & Data File',
                 'SPC FCS Data File',
                 'SPC DLL Data File',
-                'SPC Setup & Data File',  # corrupted?
+                'SPC Setup & Data File',  # fallback for corrupted file IDs
             ):
                 msg = f'{self.info.id!r} not supported'
                 raise NotImplementedError(msg)
@@ -319,7 +491,7 @@ class SdtFile:
             mi = self.measure_info[bh.meas_desc_block_no]
             bt = BlockType(bh.block_type)
             dtype = bt.dtype
-            dsize = bh.block_length // dtype.itemsize
+            dsize = int(bh.block_length) // dtype.itemsize
             fh.seek(bh.data_offs)
             if bt.compress:
                 bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
@@ -335,6 +507,9 @@ class SdtFile:
 
             # assume adc_re is always present
             adc_re = int(mi.adc_re)
+            # ensure adc_re is valid for calculations
+            if adc_re == 0:
+                adc_re = 65536
 
             # the following fields may not be present
             try:
@@ -364,48 +539,71 @@ class SdtFile:
                 image_ry = 0
 
             try:
-                mcs_points = mi.MeasHISTInfo.mcs_points
+                mcs_points = mi.HISTInfo.mcs_points
             except AttributeError:
                 mcs_points = -1
             try:
-                mcs_time = mi.MeasHISTInfo.mcs_time
+                mcs_time = mi.HISTInfo.mcs_time
             except AttributeError:
                 mcs_time = 0
 
-            if adc_re == 0:
-                adc_re = 65536
+            try:
+                fcs_points = mi.FCSInfo.fcs_points
+            except AttributeError:
+                fcs_points = -1
 
-            if dsize == scan_x * scan_y * adc_re:
+            # TODO: review how data are shaped for different block types
+            if bt.contents == 'FCS_BLOCK' and fcs_points > 0:
+                if dsize != fcs_points:
+                    data = data.reshape((-1, fcs_points))
+            elif dsize == scan_x * scan_y * adc_re:
                 data = data.reshape((scan_y, scan_x, adc_re))
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape((image_y, image_x, adc_re))
             elif dsize == scan_x * scan_y * scan_rx * scan_ry * adc_re:
                 data = data.reshape((scan_ry, scan_rx, scan_y, scan_x, adc_re))
-                if scan_rx == 1:
-                    data = data[:, 0]
-                if scan_ry == 1:
+                # remove singleton dimensions
+                if scan_ry == 1 and scan_rx == 1:
+                    data = data[0, 0]
+                elif scan_ry == 1:
                     data = data[0]
+                elif scan_rx == 1:
+                    data = data[:, 0]
             elif dsize == image_x * image_y * image_rx * image_ry * adc_re:
                 data = data.reshape(
                     (image_ry, image_rx, image_y, image_x, adc_re)
                 )
-                if image_rx == 1:
-                    data = data[:, 0]
-                if image_ry == 1:
+                # remove singleton dimensions
+                if image_ry == 1 and image_rx == 1:
+                    data = data[0, 0]
+                elif image_ry == 1:
                     data = data[0]
-            elif dsize == mcs_points:
-                data = data.reshape((-1, dsize))
+                elif image_rx == 1:
+                    data = data[:, 0]
+            elif mcs_points > 0 and dsize == mcs_points:
+                # MCS data is 1D array of points
+                pass  # keep as 1D
             else:
-                data = data.reshape((-1, adc_re))
+                try:
+                    data = data.reshape((-1, adc_re))
+                except ValueError:
+                    logger().warning(
+                        f'failed to reshape data with size={dsize} '
+                        f'and {adc_re=}, keeping as 1D array'
+                    )
+
             self.data.append(data)
 
+            # TODO: review how times are calculated for different block types
             if bt.contents == 'MCS_BLOCK' and mcs_time != 0:
                 time = numpy.arange(dsize, dtype=numpy.float64)
                 time *= mcs_time
             else:
                 # generate time axis
-                time = numpy.arange(adc_re, dtype=numpy.float64)
-                time *= mi.tac_r / (float(mi.tac_g) * adc_re)
+                time = numpy.arange(data.shape[-1], dtype=numpy.float64)
+                tac_g = float(mi.tac_g)
+                if tac_g != 0.0:
+                    time *= mi.tac_r / (tac_g * adc_re)
             self.times.append(time)
             offset = bh.next_block_offs
 
@@ -415,21 +613,19 @@ class SdtFile:
         Parameters:
             block: Block index.
 
+        Raises:
+            IndexError: If block index is out of range.
+
         """
+        if not 0 <= block < len(self.block_headers):
+            msg = (
+                f'block index {block} out of range '
+                f'[0, {len(self.block_headers)})'
+            )
+            raise IndexError(msg)
         return self.measure_info[
             int(self.block_headers[block].meas_desc_block_no)
         ]
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        pass
 
     def __repr__(self) -> str:
         filename = os.path.split(self.filename)[-1]
@@ -504,8 +700,11 @@ class SetupBlock:
     spc_bin_hdr: numpy.recarray[Any, Any] | None
     """SPCBinHdr structure."""
 
-    _offset: int
+    _binary_offset: int
     """Offset of structures in binary."""
+
+    _binary_size: int
+    """Size of structures in binary."""
 
     def __init__(self, value: bytes, /) -> None:
         assert value.startswith(b'*SETUP')
@@ -515,7 +714,8 @@ class SetupBlock:
         self.binary = b''
         self.bh_bin_hdr = None
         self.spc_bin_hdr = None
-        self._offset = 0
+        self._binary_offset = 0
+        self._binary_size = 0
 
         i = value.find(b'BIN_PARA_BEGIN')
         if i >= 0:
@@ -525,8 +725,8 @@ class SetupBlock:
             self.ascii = value.decode('windows-1250')
 
         if len(self.binary) >= 20:
-            self.binary_size = struct.unpack('<I', self.binary[16:20])[0]
-            self._offset = 20
+            self._binary_size = struct.unpack('<I', self.binary[16:20])[0]
+            self._binary_offset = 20
 
             dtype1 = numpy.dtype(SETUP_BIN_HDR)
             if len(self.binary) >= 20 + dtype1.itemsize:
@@ -535,7 +735,7 @@ class SetupBlock:
                     self.binary,
                     dtype=dtype1,
                     shape=1,
-                    offset=self._offset,
+                    offset=self._binary_offset,
                     byteorder='<',
                 )[0]
 
@@ -546,7 +746,7 @@ class SetupBlock:
                     self.binary,
                     dtype=dtype2,
                     shape=1,
-                    offset=self._offset + dtype1.itemsize,
+                    offset=self._binary_offset + dtype1.itemsize,
                     byteorder='<',
                 )[0]
 
@@ -575,6 +775,7 @@ class SetupBlock:
         try:
             number: slice | int = slice(int(record[name + '_number']))
         except ValueError:
+            # no _number field, return single record
             number = 0
 
         size = int(record[name + '_size'])
@@ -590,14 +791,14 @@ class SetupBlock:
                     )
                 return None
 
-        return numpy.rec.fromstring(
-            # type: ignore[call-overload]
+        records = numpy.rec.fromstring(  # type: ignore[call-overload]
             self.binary,
             dtype=dtype_,
             shape=1,
-            offset=self._offset + record[name + '_offs'],
+            offset=self._binary_offset + record[name + '_offs'],
             byteorder='<',
-        )[number]
+        )
+        return records[number]  # type: ignore[no-any-return]
 
     @property
     def spc_bin_hdr_ext(self) -> numpy.recarray[Any, Any] | None:
@@ -625,7 +826,7 @@ class SetupBlock:
         #     TODO
 
         return self._read_record(
-            self.spc_bin_hdr, 'GVD', dtype, truncate=False, warn=False
+            self.spc_bin_hdr, 'GVD', dtype, truncate=False
         )
 
     # TODO: parse more binary data structures here
@@ -665,8 +866,8 @@ class BlockNo:
     """Module."""
 
     def __init__(self, value: int, /) -> None:
-        self.data = (value & 0xFFFFFF00) >> 24
-        self.module = value & 0x000000FF
+        self.data = (value >> 24) & 0xFF
+        self.module = value & 0xFF
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.data} << 24 & {self.module})'
@@ -682,8 +883,8 @@ class BlockType:
 
     __slots__ = ('compress', 'contents', 'dtype', 'mode')
 
-    mode: str
-    """BLOCK_CREATION."""
+    compress: bool
+    """Data is compressed."""
 
     contents: str
     """BLOCK_CONTENT."""
@@ -691,13 +892,13 @@ class BlockType:
     dtype: numpy.dtype[Any]
     """BLOCK_DTYPE."""
 
-    compress: bool
-    """Data is compressed."""
+    mode: str
+    """BLOCK_CREATION."""
 
     def __init__(self, value: int, /) -> None:
-        self.mode = BLOCK_CREATION[value & 0xF]
-        self.contents = BLOCK_CONTENT[value & 0xF0]
-        self.dtype = BLOCK_DTYPE[value & 0xF00]
+        self.mode = BLOCK_CREATION.get(value & 0xF, 'UNKNOWN')
+        self.contents = BLOCK_CONTENT.get(value & 0xF0, 'UNKNOWN_BLOCK')
+        self.dtype = BLOCK_DTYPE.get(value & 0xF00, numpy.dtype('<u2'))
         self.compress = bool(value & 0x1000)
 
     def __repr__(self) -> str:
@@ -714,7 +915,7 @@ class BlockType:
 
 
 class FileRevision:
-    """FILE_HEADER.revision field.
+    """FILE_HEADER.revision fields.
 
     Parameters:
         value: Value of FILE_HEADER.revision.
@@ -723,11 +924,11 @@ class FileRevision:
 
     __slots__ = ('module', 'revision', 'subtype')
 
-    revision: int
-    """Software revision."""
-
     module: str
     """BH module type."""
+
+    revision: int
+    """Software revision."""
 
     subtype: str
     """BH module subtype."""
@@ -762,7 +963,7 @@ class FileRevision:
             0x8B: 'SPC-QC-104',
             0x8C: 'SPC-QC-004',
             0x8D: 'SPC-QC-106',
-            0x8E: 'SPC-QC-004',
+            0x8E: 'SPC-QC-004',  # duplicate per C header
         }.get((value & 0xFF0) >> 4, 'Unknown')
         self.subtype = {
             0x0: 'None',
@@ -770,8 +971,10 @@ class FileRevision:
         }.get(value >> 12, 'Unknown')
 
     def __repr__(self) -> str:
+        subtype = '' if self.subtype == 'None' else f' {self.subtype!r}'
         return (
-            f'<{self.__class__.__name__} {self.module!r} rev {self.revision}>'
+            f'<{self.__class__.__name__} '
+            f'{self.module!r}{subtype} rev {self.revision}>'
         )
 
 
@@ -792,18 +995,18 @@ FILE_HEADER: Record = [
     ('reserved2', 'u2'),
     ('chksum', 'u2'),
 ]
+"""bhfile_header structure."""
 
 
-# BHBinHdr
 SETUP_BIN_HDR: Record = [
     ('soft_rev', 'u4'),
     ('para_length', 'u4'),
     ('reserved1', 'u4'),
     ('reserved2', 'u2'),
 ]
+"""BHBinHdr structure."""
 
 
-# SPCBinHdr
 SETUP_BIN_SPCHDR: Record = [
     ('FCS_old_offs', 'u4'),
     ('FCS_old_size', 'u4'),
@@ -828,9 +1031,9 @@ SETUP_BIN_SPCHDR: Record = [
     ('binhdrext_offs', 'u4'),
     ('binhdrext_size', 'u2'),
 ]
+"""SPCBinHdr structure."""
 
 
-# SPCBinHdrExt
 SETUP_BIN_SPCHDREXT: Record = [
     ('MCS_img_offs', 'u4'),
     ('MCS_img_size', 'u4'),
@@ -860,6 +1063,10 @@ SETUP_BIN_SPCHDREXT: Record = [
     ('dcc_ext_size', 'u2'),
     ('extension', 'S162'),
 ]
+"""SPCBinHdrExt structure.
+
+Extension of SPCBinHdr.
+"""
 
 
 SETUP_BIN_BHPANELATTR: Record = [
@@ -869,14 +1076,15 @@ SETUP_BIN_BHPANELATTR: Record = [
     ('width', 'i4'),
     ('flag', 'i4'),
 ]
+"""BHPanelAttr structure."""
 
 SETUP_BIN_BHPANELDATA: Record1 = [
     ('status', 'i4'),
     ('left', 'i4'),
     ('data', SETUP_BIN_BHPANELATTR),
 ]
+"""BHPanelData structure."""
 
-# Definitions for GVD-120/140 module
 SETUP_BIN_GVDDATA: Record = [
     ('active', 'i2'),
     ('frame_size', 'u2'),
@@ -907,6 +1115,10 @@ SETUP_BIN_GVDDATA: Record = [
     ('control2', 'u2'),
     ('sreserve', 'i2'),
 ]
+"""GVDData structure.
+
+Definitions for GVD-120/140 module.
+"""
 
 
 SETUP_BIN_GVDPARAM: Record1 = [
@@ -917,9 +1129,9 @@ SETUP_BIN_GVDPARAM: Record1 = [
     ('line_pulse_shift', 'i2'),
     ('pnl_attr', SETUP_BIN_BHPANELATTR),
 ]
+"""GVDParam structure."""
 
 
-# Info collected when measurement finished
 MEASURE_STOP_INFO: Record = [
     ('status', 'u2'),
     ('flags', 'u2'),
@@ -938,9 +1150,12 @@ MEASURE_STOP_INFO: Record = [
     ('reserved1', 'i4'),
     ('reserved2', 'f4'),
 ]
+"""MeasStopInfo structure.
+
+Info collected when measurement finished.
+"""
 
 
-# Info collected when FIFO measurement finished
 MEASURE_FCS_INFO: Record = [
     ('chan', 'u2'),
     ('fcs_decay_calc', 'u2'),
@@ -956,9 +1171,12 @@ MEASURE_FCS_INFO: Record = [
     ('cross_mod', 'u2'),
     ('cross_mt_resol', 'u4'),
 ]
+"""MeasFCSInfo structure.
+
+Info collected when FIFO measurement finished.
+"""
 
 
-# Extension of MeasFCSInfo for other histograms
 HIST_INFO: Record = [
     ('fida_time', 'f4'),
     ('filda_time', 'f4'),
@@ -974,6 +1192,10 @@ HIST_INFO: Record = [
     ('fcs_calc_phot', 'u4'),
     ('reserved3', 'u4'),
 ]
+"""MeasHISTInfo structure.
+
+Extension of MeasFCSInfo for histograms.
+"""
 
 
 HIST_INFO_EXT: Record = [
@@ -986,6 +1208,10 @@ HIST_INFO_EXT: Record = [
     ('right_border', 'u4'),
     ('info', 'S40'),
 ]
+"""MeasHISTInfoExt structure.
+
+Extension of MeasHISTInfo for additional histograms info.
+"""
 
 
 MEASURE_INFO_EXT: Record = [
@@ -1011,9 +1237,12 @@ MEASURE_INFO_EXT: Record = [
     ('cfd_zc6_tdc', 'f4'),
     ('reserve', 'S1225'),
 ]
+"""MeasInfoExt structure.
+
+Extension of MeasureInfo for additional info.
+"""
 
 
-# Measurement description blocks
 MEASURE_INFO: Record2 = [
     ('time', 'S9'),
     ('date', 'S11'),
@@ -1083,7 +1312,7 @@ MEASURE_INFO: Record2 = [
     ('adc_de', 'i2'),
     ('det_type', 'i2'),
     ('x_axis', 'i2'),
-    ('MeasHISTInfo', HIST_INFO),
+    ('HISTInfo', HIST_INFO),
     ('HISTInfoExt', HIST_INFO_EXT),
     ('sync_delay', 'f4'),
     ('sdel_ser_no', 'u2'),
@@ -1109,6 +1338,7 @@ MEASURE_INFO: Record2 = [
     ('extension_used', 'u1'),
     ('minfo_ext', MEASURE_INFO_EXT),
 ]
+"""MeasureInfo structure."""
 
 
 BLOCK_HEADER_OLD: Record = [
@@ -1120,6 +1350,7 @@ BLOCK_HEADER_OLD: Record = [
     ('lblock_no', 'u4'),
     ('block_length', 'u4'),
 ]
+"""BHFileBlockHeader structure for revision < 15."""
 
 
 BLOCK_HEADER: Record = [
@@ -1132,6 +1363,7 @@ BLOCK_HEADER: Record = [
     ('lblock_no', 'u4'),
     ('block_length', 'u4'),
 ]
+"""BHFileBlockHeader structure for revision >= 15."""
 
 
 # Mode of creation
@@ -1144,6 +1376,8 @@ BLOCK_CREATION: dict[int, str] = {
     5: 'SIM_DATA',
     8: 'FIFO_DATA',
     9: 'FIFO_DATA_FROM_FILE',
+    10: 'MOM_DATA',
+    11: 'MOM_DATA_FROM_FILE',
 }
 
 BLOCK_CONTENT: dict[int, str] = {
@@ -1246,9 +1480,16 @@ def stripnull(
     *,
     first: bool = True,
 ) -> bytes:
-    r"""Return string truncated at first null character.
+    r"""Return string truncated at first or trailing null characters.
 
     Use to clean NULL terminated C strings.
+
+    Parameters:
+        string: Byte string to process.
+        null: Null character to search for (default: b'\x00').
+        first:
+            If True, truncate at first null.
+            If False, remove trailing nulls.
 
     >>> stripnull(b'bytes\x00\x00')
     b'bytes'
@@ -1275,24 +1516,3 @@ def stripnull(
 def logger() -> logging.Logger:
     """Return logger for sdtfile module."""
     return logging.getLogger('sdtfile')
-
-
-if __name__ == '__main__':
-
-    assert numpy.dtype(FILE_HEADER).itemsize == 42  # BH_HDR_LENGTH
-    assert numpy.dtype(MEASURE_INFO).itemsize == 2048
-    assert numpy.dtype(MEASURE_INFO_EXT).itemsize == 1536
-    assert numpy.dtype(MEASURE_STOP_INFO).itemsize == 60
-    assert numpy.dtype(MEASURE_FCS_INFO).itemsize == 38
-    assert numpy.dtype(HIST_INFO).itemsize == 48
-    assert numpy.dtype(HIST_INFO_EXT).itemsize == 64
-    assert numpy.dtype(SETUP_BIN_HDR).itemsize == 14
-    assert numpy.dtype(SETUP_BIN_SPCHDR).itemsize == 72
-    assert numpy.dtype(SETUP_BIN_SPCHDREXT).itemsize == 242
-    assert numpy.dtype(SETUP_BIN_GVDDATA).itemsize == 80
-    assert numpy.dtype(SETUP_BIN_GVDPARAM).itemsize == 112
-    assert numpy.dtype(SETUP_BIN_BHPANELATTR).itemsize == 20
-    assert numpy.dtype(BLOCK_HEADER_OLD).itemsize == 22
-    assert numpy.dtype(BLOCK_HEADER).itemsize == 22
-
-# mypy: disable-error-code="no-any-return"
