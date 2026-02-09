@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.1.14
+:Version: 2026.2.8
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,18 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
 
 Revisions
 ---------
+
+2026.2.8
+
+- Derive SdtFile from BinaryFile (breaking).
+- Rename MEASURE_INFO.MeasHISTInfo to HISTInfo to match C struct (breaking).
+- Revise shaping of FCS_BLOCK data (breaking).
+- Fix code review issues.
 
 2026.1.14
 
