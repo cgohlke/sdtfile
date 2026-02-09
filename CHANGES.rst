@@ -1,6 +1,13 @@
 Revisions
 ---------
 
+2026.2.8
+
+- Derive SdtFile from BinaryFile (breaking).
+- Rename MEASURE_INFO.MeasHISTInfo to HISTInfo to match C struct (breaking).
+- Revise shaping of FCS_BLOCK data (breaking).
+- Fix code review issues.
+
 2026.1.14
 
 - Improve code quality.
