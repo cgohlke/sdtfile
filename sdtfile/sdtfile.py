@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.2.8
+:Version: 2026.6.6
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,19 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
 
 Revisions
 ---------
+
+2026.6.6
+
+- Fix potential file handle leak in SdtFile init.
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map SDT files.
+- Drop support for Python 3.11 and numpy 2.0 (SPEC0).
+- Support Python 3.15.
 
 2026.2.8
 
@@ -134,6 +142,7 @@ Read image and metadata from a "SPC Setup & Data File":
 (128, 128, 256)
 >>> sdt.times[0].shape
 (256,)
+>>> sdt.close()
 
 Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 
@@ -146,6 +155,7 @@ Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 (1024,)
 >>> int(sdt.setup.bh_bin_hdr['soft_rev'])
 850
+>>> sdt.close()
 
 Read image data from a "SPC FCS Data File" as numpy array:
 
@@ -158,12 +168,13 @@ Read image data from a "SPC FCS Data File" as numpy array:
 (512, 512, 256)
 >>> sdt.times[0].shape
 (256,)
+>>> sdt.close()
 
 """
 
 from __future__ import annotations
 
-__version__ = '2026.2.8'
+__version__ = '2026.6.6'
 
 __all__ = [
     'BlockNo',
@@ -178,8 +189,10 @@ __all__ = [
 import contextlib
 import io
 import logging
+import mmap
 import os
 import struct
+import threading
 import zipfile
 from typing import TYPE_CHECKING, ClassVar, final
 
@@ -189,7 +202,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import IO, Any, Literal, Self
 
-    from numpy.typing import NDArray
+    from numpy.typing import DTypeLike, NDArray
 
     Record = list[tuple[str, str]]
     Record1 = list[tuple[str, str | Record]]
@@ -203,21 +216,37 @@ class BinaryFile:
         file:
             File name or seekable binary stream.
         mode:
-            File open mode if `file` is a file name.
-            The default is 'r'. Files are always opened in binary mode.
+            File open mode if ``file`` is a file name.
+            If not specified, defaults to ``'r'``. Files are always opened
+            in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
+
+    Notes:
+        Memory mapping can improve random-access read performance on large
+        files or repeated reads of the same file regions by reducing syscall
+        overhead and data copying.
+        For sequential one-pass reads, regular buffered I/O may be faster.
 
     Raises:
+        TypeError:
+            File is a text stream, or an unsupported type.
         ValueError:
             Invalid file name, extension, or stream.
-            File is not a binary or seekable stream.
+            File stream is not seekable.
 
     """
 
     _fh: IO[bytes]
+    _mm: mmap.mmap | None
+    _mv: memoryview | None  # view of _mm
     _path: str  # absolute path of file
     _name: str  # name of file or handle
     _close: bool  # file needs to be closed
     _closed: bool  # file is closed
+    _lock: contextlib.AbstractContextManager[Any]
     _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
 
     def __init__(
@@ -226,12 +255,16 @@ class BinaryFile:
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
     ) -> None:
 
+        self._mm = None
+        self._mv = None
         self._path = ''
         self._name = 'Unnamed'
         self._close = False
         self._closed = False
+        self._lock = contextlib.nullcontext()
 
         if isinstance(file, (str, os.PathLike)):
             ext = os.path.splitext(file)[-1].lower()
@@ -242,6 +275,7 @@ class BinaryFile:
                 mode = 'r'
             else:
                 if mode[-1:] == 'b':
+                    # accept 'rb'/'r+b'
                     mode = mode[:-1]  # type: ignore[assignment]
                 if mode not in {'r', 'r+'}:
                     msg = f'invalid {mode=!r}'
@@ -253,7 +287,9 @@ class BinaryFile:
         elif hasattr(file, 'seek'):
             # binary stream: open file, BytesIO, fsspec LocalFileOpener
             if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
-                msg = f'{file=!r} is not open in binary mode'
+                msg = (  # type: ignore[unreachable]
+                    f'{file=!r} is not open in binary mode'
+                )
                 raise TypeError(msg)
 
             self._fh = file
@@ -263,9 +299,9 @@ class BinaryFile:
                 msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
-                self._path = os.path.normpath(file.path)
+                self._path = os.path.abspath(file.path)
             elif hasattr(file, 'name'):
-                self._path = os.path.normpath(file.name)
+                self._path = os.path.abspath(file.name)
 
         elif hasattr(file, 'open'):
             # fsspec OpenFile
@@ -279,20 +315,35 @@ class BinaryFile:
                 msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
-                self._path = os.path.normpath(file.path)
+                self._path = os.path.abspath(file.path)
 
         else:
             msg = f'cannot handle {type(file)=}'
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         if hasattr(file, 'name') and file.name:
             self._name = os.path.basename(file.name)
         elif self._path:
             self._name = os.path.basename(self._path)
-        elif isinstance(file, io.BytesIO):
-            self._name = 'BytesIO'
-        # else:
-        #     self._name = f'{type(file)}'
+        else:
+            self._name = type(file).__name__
+
+        if memmap:
+            _fh: Any = self._fh
+            if isinstance(_fh, mmap.mmap):
+                self._mm = _fh
+                self._mv = memoryview(self._mm)
+            else:
+                try:
+                    access = (
+                        mmap.ACCESS_WRITE
+                        if self._fh.writable()
+                        else mmap.ACCESS_READ
+                    )
+                    self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
+                    self._mv = memoryview(self._mm)
+                except OSError:
+                    pass
 
     @property
     def filehandle(self) -> IO[bytes]:
@@ -301,17 +352,17 @@ class BinaryFile:
 
     @property
     def filepath(self) -> str:
-        """Path to file."""
+        """Absolute path to file, or empty string if no path is available."""
         return self._path
 
     @property
     def filename(self) -> str:
-        """Name of file or empty if binary stream."""
+        """Basename of file path, or empty string if no path is available."""
         return os.path.basename(self._path)
 
     @property
     def dirname(self) -> str:
-        """Directory containing file or empty if binary stream."""
+        """Directory containing file, or empty string if no path available."""
         return os.path.dirname(self._path)
 
     @property
@@ -329,18 +380,173 @@ class BinaryFile:
         return {'name': self.name, 'filepath': self.filepath}
 
     @property
+    def lock(self) -> contextlib.AbstractContextManager[Any]:
+        """Lock for thread-safe file access."""
+        return self._lock
+
+    def set_lock(self, enabled: bool, /) -> None:  # noqa: FBT001
+        """Enable or disable thread-safe file access.
+
+        Parameters:
+            enabled:
+                If true, use a threading.RLock, else a no-op lock.
+                Has no effect when memory-mapped I/O is active.
+
+        """
+        if self._mm is not None:
+            return
+        self._lock = threading.RLock() if enabled else contextlib.nullcontext()
+
+    def _write_at(
+        self, offset: int, data: bytes | bytearray | memoryview, /
+    ) -> None:
+        """Write bytes to file at given offset.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            data: Data to write.
+
+        """
+        if self._mm is not None and self.writable:
+            # writable mmap: direct slice write, no cursor movement
+            self._mm[offset : offset + len(data)] = data
+        else:
+            with self._lock:
+                self._fh.seek(offset)
+                self._fh.write(data)
+
+    def _read_at(self, offset: int, size: int, /) -> bytes | memoryview:
+        """Read bytes from file at given offset.
+
+        For memory-mapped files, returned bytes are exposed as a
+        ``memoryview`` of the mapping. Keeping that view alive may keep
+        the memory map (and associated file resources/lock) alive.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            size: Number of bytes to read.
+
+        """
+        mv = self._mv
+        if mv is not None:
+            return mv[offset : offset + size]
+        fh = self._fh
+        with self._lock:
+            fh.seek(offset)
+            return fh.read(size)
+
+    def _read_array(
+        self,
+        offset: int,
+        count: int,
+        dtype: DTypeLike,
+        *,
+        copy: bool = False,
+        writable: bool = False,
+        truncate: bool | None = False,
+    ) -> NDArray[Any]:
+        """Read numpy array from file at given offset.
+
+        For memory-mapped files, returned data are exposed directly as a
+        NumPy array view of the mapping (zero copy). Keeping that array alive
+        may keep the memory map (and associated file resources/lock) alive.
+
+        Parameters:
+            offset:
+                Byte offset from start of file.
+            count:
+                Number of elements to read. If ``-1``, read to end of file.
+            dtype:
+                Array element type.
+            copy:
+                If true, always return a detached copy in main memory.
+                For memory-mapped files, bypass the direct-view fast path.
+            writable:
+                By default, return read-only array from memory-mapped file.
+                Prevents accidental modification of underlying writable file.
+                Has no effect for non-memory-mapped files (always writeable).
+            truncate:
+                Allow partial reads of array.
+                If None, log error on partial read.
+
+        """
+        dtype = numpy.dtype(dtype)
+        itemsize = dtype.itemsize
+        if offset < 0:
+            msg = f'{offset=} < 0'
+            raise ValueError(msg)
+        if count < -1:
+            msg = f'{count=} < -1'
+            raise ValueError(msg)
+
+        mv = self._mv
+        if mv is not None:
+            if count == -1:
+                count = max(0, (len(mv) - offset) // itemsize)
+            nbytes = count * itemsize
+            size = min(nbytes, max(0, len(mv) - offset))
+            n = size - size % itemsize
+            array = numpy.frombuffer(
+                mv[offset : offset + n],
+                dtype,
+            )
+            if copy:
+                array = array.copy()
+            elif not writable and array.flags.writeable:
+                array.flags.writeable = False
+        elif count > -1:
+            fh = self._fh
+            nbytes = count * itemsize
+            array = numpy.empty(count, dtype)
+            with self._lock:
+                fh.seek(offset)
+                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+        else:
+            fh = self._fh
+            with self._lock:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                count = max(0, (size - offset) // itemsize)
+                nbytes = count * itemsize
+                array = numpy.empty(count, dtype)
+                fh.seek(offset)
+                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+
+        if n != nbytes:
+            array = array[: n // itemsize]
+            msg = f'expected {count} items, got {n // itemsize}'
+            if truncate is None:
+                logging.getLogger(__name__.split('.', 1)[0]).error(msg)
+            elif not truncate:
+                raise ValueError(msg)
+
+        return array
+
+    @property
+    def writable(self) -> bool:
+        """File is open for writing."""
+        return self._fh.writable()
+
+    @property
+    def memmapped(self) -> bool:
+        """File is memory-mapped."""
+        return self._mm is not None
+
+    @property
     def closed(self) -> bool:
         """File is closed."""
         return self._closed
 
     def close(self) -> None:
         """Close file."""
+        self._closed = True  # always report file as closed
+        self._mv = None  # do not release(), threads may hold local refs
+        if self._mm is not None and self._mm is not self._fh:  # type: ignore[comparison-overlap]
+            with contextlib.suppress(Exception):
+                self._mm.close()
         if self._close:
-            try:
-                self._closed = True
+            with contextlib.suppress(Exception):
                 self._fh.close()
-            except Exception:  # noqa: S110
-                pass
 
     def __enter__(self) -> Self:
         return self
@@ -354,9 +560,7 @@ class BinaryFile:
         self.close()
 
     def __repr__(self) -> str:
-        if self._name:
-            return f'<{self.__class__.__name__} {self._name!r}>'
-        return f'<{self.__class__.__name__}>'
+        return f'<{self.__class__.__name__} {self._name!r}>'
 
 
 @final
@@ -364,7 +568,16 @@ class SdtFile(BinaryFile):
     """Becker & Hickl SDT file.
 
     Parameters:
-        arg: File name or open file.
+        file:
+            File name or seekable binary stream.
+        mode:
+            File open mode if ``file`` is a file name.
+            If not specified, defaults to ``'r'``. Files are always opened
+            in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
 
     """
 
@@ -395,9 +608,16 @@ class SdtFile(BinaryFile):
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
     ) -> None:
-        super().__init__(file, mode=mode)
+        super().__init__(file, mode=mode, memmap=memmap)
+        try:
+            self._init()
+        except BaseException:
+            self.close()
+            raise
 
+    def _init(self) -> None:
         fh = self._fh
 
         # read file header
@@ -427,12 +647,12 @@ class SdtFile(BinaryFile):
         info = info.replace('\r\n', '\n')
         self.info = FileInfo(info)
         try:
-            if self.info.id not in (
+            if self.info.id not in {
                 'SPC Setup & Data File',
                 'SPC FCS Data File',
                 'SPC DLL Data File',
                 'SPC Setup & Data File',  # fallback for corrupted file IDs
-            ):
+            }:
                 msg = f'{self.info.id!r} not supported'
                 raise NotImplementedError(msg)
         except AttributeError as exc:
