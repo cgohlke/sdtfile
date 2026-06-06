@@ -1,6 +1,14 @@
 Revisions
 ---------
 
+2026.6.6
+
+- Fix potential file handle leak in SdtFile init.
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map SDT files.
+- Drop support for Python 3.11 and numpy 2.0 (SPEC0).
+- Support Python 3.15.
+
 2026.2.8
 
 - Derive SdtFile from BinaryFile (breaking).
