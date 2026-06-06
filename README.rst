@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.2.8
+:Version: 2026.6.6
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,19 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
 
 Revisions
 ---------
+
+2026.6.6
+
+- Fix potential file handle leak in SdtFile init.
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map SDT files.
+- Drop support for Python 3.11 and numpy 2.0 (SPEC0).
+- Support Python 3.15.
 
 2026.2.8
 
@@ -109,6 +117,7 @@ Read image and metadata from a "SPC Setup & Data File":
     (128, 128, 256)
     >>> sdt.times[0].shape
     (256,)
+    >>> sdt.close()
 
 Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 
@@ -123,6 +132,7 @@ Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
     (1024,)
     >>> int(sdt.setup.bh_bin_hdr['soft_rev'])
     850
+    >>> sdt.close()
 
 Read image data from a "SPC FCS Data File" as numpy array:
 
@@ -137,3 +147,4 @@ Read image data from a "SPC FCS Data File" as numpy array:
     (512, 512, 256)
     >>> sdt.times[0].shape
     (256,)
+    >>> sdt.close()
