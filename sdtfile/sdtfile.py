@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.6
+:Version: 2026.6.29
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,11 +63,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.0
 
 Revisions
 ---------
+
+2026.6.29
+
+- Fix reading SDT files with truncated embedded ZIP files (#8).
 
 2026.6.6
 
@@ -94,23 +98,6 @@ Revisions
 - Drop support for Python 3.10.
 
 2025.5.10
-
-- Support Python 3.14.
-
-2025.3.25
-
-- Fix shape of data with routing channels.
-- Drop support for Python 3.9, support Python 3.13.
-
-2024.12.6
-
-- Fix read MeasureInfo fields as scalars (breaking).
-- Update some structure field names with BH reference (breaking).
-- Parse some SetupBlock binary structures (#7).
-- Include more information in str(SdtFile).
-- Add subtype to FileRevision.
-
-2024.11.24
 
 - …
 
@@ -174,7 +161,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
 
 from __future__ import annotations
 
-__version__ = '2026.6.6'
+__version__ = '2026.6.29'
 
 __all__ = [
     'BlockNo',
@@ -194,6 +181,7 @@ import os
 import struct
 import threading
 import zipfile
+from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, final
 
 import numpy
@@ -522,6 +510,23 @@ class BinaryFile:
 
         return array
 
+    @cached_property
+    def filesize(self) -> int:
+        """Size of file in bytes."""
+        if self._mm is not None:
+            return len(self._mm)
+        fh = self._fh
+        try:
+            return os.fstat(fh.fileno()).st_size
+        except (AttributeError, io.UnsupportedOperation, OSError):
+            pass
+        with self._lock:
+            pos = fh.tell()
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(pos)
+        return size
+
     @property
     def writable(self) -> bool:
         """File is open for writing."""
@@ -715,8 +720,17 @@ class SdtFile(BinaryFile):
             fh.seek(bh.data_offs)
             if bt.compress:
                 bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
-                with zipfile.ZipFile(bio) as zf:
-                    databytes = zf.read(zf.filelist[0].filename)  # data_block
+                try:
+                    with zipfile.ZipFile(bio) as zf:
+                        databytes = zf.read(zf.filelist[0].filename)
+                except zipfile.BadZipFile:
+                    # the EOCD record may be missing one trailing byte
+                    # https://github.com/cgohlke/sdtfile/issues/8
+                    bio.seek(0, io.SEEK_END)
+                    bio.write(b'\x00')  # add missing byte
+                    bio.seek(0)
+                    with zipfile.ZipFile(bio) as zf:
+                        databytes = zf.read(zf.filelist[0].filename)
                 del bio
                 data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
