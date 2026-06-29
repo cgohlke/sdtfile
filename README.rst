@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.6
+:Version: 2026.6.29
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,11 +36,15 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.0
 
 Revisions
 ---------
+
+2026.6.29
+
+- Fix reading SDT files with truncated embedded ZIP files (#8).
 
 2026.6.6
 
@@ -67,23 +71,6 @@ Revisions
 - Drop support for Python 3.10.
 
 2025.5.10
-
-- Support Python 3.14.
-
-2025.3.25
-
-- Fix shape of data with routing channels.
-- Drop support for Python 3.9, support Python 3.13.
-
-2024.12.6
-
-- Fix read MeasureInfo fields as scalars (breaking).
-- Update some structure field names with BH reference (breaking).
-- Parse some SetupBlock binary structures (#7).
-- Include more information in str(SdtFile).
-- Add subtype to FileRevision.
-
-2024.11.24
 
 - …
 
