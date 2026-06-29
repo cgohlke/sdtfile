@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2026.6.29
+
+- Fix reading SDT files with truncated embedded ZIP files (#8).
+
 2026.6.6
 
 - Fix potential file handle leak in SdtFile init.
