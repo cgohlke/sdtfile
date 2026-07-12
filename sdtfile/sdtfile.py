@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.29
+:Version: 2026.7.12
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -50,7 +50,7 @@ Quickstart
 Install the sdtfile package and all dependencies from the
 `Python Package Index <https://pypi.org/project/sdtfile/>`_::
 
-    python -m pip install -U sdtfile
+    python -m pip install -U sdtfile[all]
 
 See `Examples`_ for using the programming interface.
 
@@ -64,10 +64,21 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.0
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
+- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
+  (optional for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.7.12
+
+- Fix BlockNo attribute names (breaking).
+- Try power-of-two padded image shapes when block/adc_re > image_y * image_x.
+- Support LZ4 compressed and larger than 4 GB data blocks (not tested).
+- Update MeasureInfoExt structure with MeasStopInfoExt and MWL fields.
+- Use BinaryFile for file I/O.
+- Add simple CLI to preview data and metadata in SDT files.
 
 2026.6.29
 
@@ -114,7 +125,7 @@ References
 Examples
 --------
 
-Read image and metadata from a "SPC Setup & Data File":
+Read image and metadata from an "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
 >>> int(sdt.header.revision)
@@ -131,7 +142,7 @@ Read image and metadata from a "SPC Setup & Data File":
 (256,)
 >>> sdt.close()
 
-Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
+Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
 >>> sdt = SdtFile('fluorescein.sdt')
 >>> len(sdt.data)
@@ -144,7 +155,7 @@ Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
 850
 >>> sdt.close()
 
-Read image data from a "SPC FCS Data File" as numpy array:
+Read image data from an "SPC FCS Data File" as numpy array:
 
 >>> sdt = SdtFile('fcs.sdt')
 >>> sdt.info.id[1:-1]
@@ -157,11 +168,15 @@ Read image data from a "SPC FCS Data File" as numpy array:
 (256,)
 >>> sdt.close()
 
+View the image and metadata in an SDT file from the console::
+
+    $ python -m sdtfile image.sdt
+
 """
 
 from __future__ import annotations
 
-__version__ = '2026.6.29'
+__version__ = '2026.7.12'
 
 __all__ = [
     'BlockNo',
@@ -179,6 +194,7 @@ import logging
 import mmap
 import os
 import struct
+import sys
 import threading
 import zipfile
 from functools import cached_property
@@ -623,20 +639,15 @@ class SdtFile(BinaryFile):
             raise
 
     def _init(self) -> None:
-        fh = self._fh
-
         # read file header
-        self.header = numpy.rec.fromfile(
-            # type: ignore[call-overload]
-            fh,
-            dtype=FILE_HEADER,
-            shape=1,
-            byteorder='<',
-        )[0]
-        if self.header.chksum != 0x55AA and self.header.header_valid != 0x5555:
+        self.header = numpy.rec.array(self._read_array(0, 1, FILE_HEADER))[0]
+        if (
+            self.header.chksum not in {0x55AA, 0xAA55}
+            and self.header.header_valid != 0x5555
+        ):
             msg = (
                 'invalid SDT file header '
-                f'(chksum=0x{self.header.chksum:x}!=0x55AA, '
+                f'(chksum=0x{self.header.chksum:x} not in {{0x55AA, 0xAA55}}, '
                 f'header_valid=0x{self.header.header_valid:x}!=0x5555)'
             )
             raise ValueError(msg)
@@ -647,8 +658,9 @@ class SdtFile(BinaryFile):
             raise ValueError(msg)
 
         # read file info
-        fh.seek(self.header.info_offs)
-        info = fh.read(self.header.info_length).decode('windows-1250')
+        info = bytes(
+            self._read_at(self.header.info_offs, self.header.info_length)
+        ).decode('windows-1250')
         info = info.replace('\r\n', '\n')
         self.info = FileInfo(info)
         try:
@@ -666,8 +678,13 @@ class SdtFile(BinaryFile):
 
         # read setup block
         if self.header.setup_length:
-            fh.seek(self.header.setup_offs)
-            self.setup = SetupBlock(fh.read(self.header.setup_length))
+            self.setup = SetupBlock(
+                bytes(
+                    self._read_at(
+                        self.header.setup_offs, self.header.setup_length
+                    )
+                )
+            )
         else:
             # SPC DLL data file contain no setup, only data
             self.setup = None
@@ -677,18 +694,14 @@ class SdtFile(BinaryFile):
         dtype = record_dtype(
             MEASURE_INFO, int(self.header.meas_desc_block_length)
         )
-        fh.seek(self.header.meas_desc_block_offs)
-        for _ in range(self.header.no_of_meas_desc_blocks):
+        base_offs = int(self.header.meas_desc_block_offs)
+        block_len = int(self.header.meas_desc_block_length)
+        for i in range(self.header.no_of_meas_desc_blocks):
             self.measure_info.append(
-                numpy.rec.fromfile(
-                    # type: ignore[call-overload]
-                    fh,
-                    dtype=dtype,
-                    shape=1,
-                    byteorder='<',
+                numpy.rec.array(
+                    self._read_array(base_offs + i * block_len, 1, dtype)
                 )[0]
             )
-            fh.seek(self.header.meas_desc_block_length - dtype.itemsize, 1)
 
         rev = FileRevision(self.header.revision)
         if rev.revision >= 15:
@@ -703,38 +716,60 @@ class SdtFile(BinaryFile):
         offset = self.header.data_block_offs
         for _ in range(self.header.no_of_data_blocks):
             # read data block header
-            fh.seek(offset)
-            bh = numpy.rec.fromfile(
-                # type: ignore[call-overload]
-                fh,
-                dtype=block_header_t,
-                shape=1,
-                byteorder='<',
-            )[0]
+            bh = numpy.rec.array(self._read_array(offset, 1, block_header_t))[
+                0
+            ]
             self.block_headers.append(bh)
+            # revision >= 15 extends data_offs and next_block_offs with a
+            # 1-byte high field, giving 40-bit addressing for blocks > 4 GB
+            if rev.revision >= 15:
+                data_offset = int(bh.data_offs) | (int(bh.data_offs_ext) << 32)
+                next_offset = int(bh.next_block_offs) | (
+                    int(bh.next_block_offs_ext) << 32
+                )
+            else:
+                data_offset = int(bh.data_offs)
+                next_offset = int(bh.next_block_offs)
             # read data block
             mi = self.measure_info[bh.meas_desc_block_no]
             bt = BlockType(bh.block_type)
             dtype = bt.dtype
             dsize = int(bh.block_length) // dtype.itemsize
-            fh.seek(bh.data_offs)
             if bt.compress:
-                bio = io.BytesIO(fh.read(bh.next_block_offs - bh.data_offs))
-                try:
-                    with zipfile.ZipFile(bio) as zf:
-                        databytes = zf.read(zf.filelist[0].filename)
-                except zipfile.BadZipFile:
-                    # the EOCD record may be missing one trailing byte
-                    # https://github.com/cgohlke/sdtfile/issues/8
-                    bio.seek(0, io.SEEK_END)
-                    bio.write(b'\x00')  # add missing byte
-                    bio.seek(0)
-                    with zipfile.ZipFile(bio) as zf:
-                        databytes = zf.read(zf.filelist[0].filename)
-                del bio
+                compressed = self._read_at(
+                    data_offset, next_offset - data_offset
+                )
+                if bt.lz4:
+                    # TODO: test this
+                    try:
+                        from imagecodecs import lz4_decode
+                    except ImportError as exc:
+                        msg = (
+                            'imagecodecs is required to read '
+                            'LZ4-compressed SDT files'
+                        )
+                        raise ImportError(msg) from exc
+                    databytes = lz4_decode(
+                        compressed, out=int(bh.block_length)
+                    )
+                else:
+                    # TODO: replace this with simple ZIP parsing
+                    # and direct zlib.decompress?
+                    try:
+                        # MemoryReader avoids extra copy of compressed
+                        with zipfile.ZipFile(MemoryReader(compressed)) as zf:
+                            databytes = zf.read(zf.filelist[0].filename)
+                    except zipfile.BadZipFile:
+                        # the EOCD record may be missing one trailing byte
+                        # https://github.com/cgohlke/sdtfile/issues/8
+                        bio = io.BytesIO(bytes(compressed) + b'\x00')
+                        with zipfile.ZipFile(bio) as zf:
+                            databytes = zf.read(zf.filelist[0].filename)
                 data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
-                data = numpy.fromfile(fh, dtype=dtype, count=dsize)
+                data = self._read_array(
+                    data_offset, count=dsize, dtype=dtype, copy=True
+                )
 
             # TODO: support more block types
             # the following works with DECAY, IMG, MCS, PAGE
@@ -743,6 +778,7 @@ class SdtFile(BinaryFile):
             adc_re = int(mi.adc_re)
             # ensure adc_re is valid for calculations
             if adc_re == 0:
+                # TODO: test this
                 adc_re = 65536
 
             # the following fields may not be present
@@ -786,6 +822,40 @@ class SdtFile(BinaryFile):
             except AttributeError:
                 fcs_points = -1
 
+            image_shape_from_padded: tuple[int, int] | None = None
+            if (
+                bt.contents in {'IMG_BLOCK', 'IMG_MCS_BLOCK'}
+                and image_x > 0
+                and image_y > 0
+                and dsize % adc_re == 0
+            ):
+                ncurves = dsize // adc_re
+                image_pixels = image_x * image_y
+                if ncurves > image_pixels:
+                    # Some files store image curves in power-of-two padded
+                    # image dimensions. Try width-only, height-only, and both.
+                    padded_x = 1 << (image_x - 1).bit_length()
+                    padded_y = 1 << (image_y - 1).bit_length()
+                    candidates = [
+                        shape
+                        for shape in {
+                            (image_y, padded_x),
+                            (padded_y, image_x),
+                            (padded_y, padded_x),
+                        }
+                        if shape[0] >= image_y
+                        and shape[1] >= image_x
+                        and ncurves == shape[0] * shape[1]
+                    ]
+                    if len(candidates) == 1:
+                        image_shape_from_padded = candidates[0]
+                    elif len(candidates) > 1:
+                        logger().warning(
+                            f'ambiguous padded image shape for '
+                            f'{image_y=} {image_x=} and {ncurves=}; '
+                            f'keeping fallback reshape'
+                        )
+
             # TODO: review how data are shaped for different block types
             if bt.contents == 'FCS_BLOCK' and fcs_points > 0:
                 if dsize != fcs_points:
@@ -794,16 +864,22 @@ class SdtFile(BinaryFile):
                 data = data.reshape((scan_y, scan_x, adc_re))
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape((image_y, image_x, adc_re))
+            elif image_shape_from_padded is not None:
+                data = data.reshape((*image_shape_from_padded, adc_re))
+                data = data[:image_y, :image_x, :]
             elif dsize == scan_x * scan_y * scan_rx * scan_ry * adc_re:
                 data = data.reshape((scan_ry, scan_rx, scan_y, scan_x, adc_re))
                 # remove singleton dimensions
                 if scan_ry == 1 and scan_rx == 1:
+                    # TODO: test this
                     data = data[0, 0]
                 elif scan_ry == 1:
                     data = data[0]
                 elif scan_rx == 1:
+                    # TODO: test this
                     data = data[:, 0]
             elif dsize == image_x * image_y * image_rx * image_ry * adc_re:
+                # TODO: test this
                 data = data.reshape(
                     (image_ry, image_rx, image_y, image_x, adc_re)
                 )
@@ -839,7 +915,7 @@ class SdtFile(BinaryFile):
                 if tac_g != 0.0:
                     time *= mi.tac_r / (tac_g * adc_re)
             self.times.append(time)
-            offset = bh.next_block_offs
+            offset = next_offset
 
     def block_measure_info(self, block: int, /) -> numpy.recarray[Any, Any]:
         """Return measure_info record for data block.
@@ -887,6 +963,65 @@ class SdtFile(BinaryFile):
             indent('shapes:', *(i.shape for i in self.data)),
             indent('setup:', self.setup),
         )
+
+
+class MemoryReader(io.RawIOBase):
+    """Seekable, read-only wrapper around bytes-like object (zero-copy).
+
+    Unlike ``io.BytesIO``, no copy of the input buffer is made.
+    Data is only copied in small chunks that callers read at a time.
+
+    """
+
+    __slots__ = ('_mv', '_pos')
+
+    _mv: memoryview
+    _pos: int
+
+    def __init__(self, data: bytes | memoryview) -> None:
+        self._mv = memoryview(data)
+        self._pos = 0
+
+    def read(self, n: int = -1) -> bytes:
+        """Return bytes from memory view."""
+        if n < 0:
+            n = len(self._mv) - self._pos
+        else:
+            n = min(n, len(self._mv) - self._pos)
+        out = bytes(self._mv[self._pos : self._pos + n])
+        self._pos += n
+        return out
+
+    def readinto(self, b: bytearray | memoryview) -> int:  # type: ignore[override]
+        """Read bytes into buffer and return number of bytes read."""
+        n = min(len(b), len(self._mv) - self._pos)
+        b[:n] = self._mv[self._pos : self._pos + n]
+        self._pos += n
+        return n
+
+    def seek(self, pos: int, whence: int = os.SEEK_SET) -> int:
+        """Move to new position in memory view."""
+        size = len(self._mv)
+        if whence == os.SEEK_SET:
+            self._pos = pos
+        elif whence == os.SEEK_CUR:
+            self._pos += pos
+        elif whence == os.SEEK_END:
+            self._pos = size + pos
+        self._pos = max(0, min(self._pos, size))
+        return self._pos
+
+    def tell(self) -> int:
+        """Return current position in memory view."""
+        return self._pos
+
+    def readable(self) -> bool:
+        """Return if memory view is readable."""
+        return True
+
+    def seekable(self) -> bool:
+        """Return if memory view is seekable."""
+        return True
 
 
 class FileInfo(str):  # noqa: SLOT000
@@ -1050,8 +1185,10 @@ class SetupBlock:
             return None
 
         dtype = SETUP_BIN_GVDPARAM.copy()
-        if size == 110:
-            dtype[2] = ('gvd_data', SETUP_BIN_GVDDATA[:-1])
+        del size
+        # TODO: how to use GVD_size?
+        # if size == 110:
+        #     dtype[2] = ('gvd_data', SETUP_BIN_GVDDATA[:-29])
         # elif size == 86:
         #     TODO
         # elif size == 84:
@@ -1091,20 +1228,20 @@ class BlockNo:
 
     """
 
-    __slots__ = ('data', 'module')
+    __slots__ = ('block', 'module')
 
-    data: int
-    """Data."""
+    block: int
+    """Block/channel number (bits 0-7)."""
 
     module: int
-    """Module."""
+    """Module number (bits 24-25)."""
 
     def __init__(self, value: int, /) -> None:
-        self.data = (value >> 24) & 0xFF
-        self.module = value & 0xFF
+        self.module = (value >> 24) & 0xFF
+        self.block = value & 0xFF
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}({self.data} << 24 & {self.module})'
+        return f'{self.__class__.__name__}({self.module} << 24 & {self.block})'
 
 
 class BlockType:
@@ -1115,7 +1252,10 @@ class BlockType:
 
     """
 
-    __slots__ = ('compress', 'contents', 'dtype', 'mode')
+    __slots__ = ('coincidence', 'compress', 'contents', 'dtype', 'lz4', 'mode')
+
+    coincidence: bool
+    """Data is coincidence data."""
 
     compress: bool
     """Data is compressed."""
@@ -1126,14 +1266,20 @@ class BlockType:
     dtype: numpy.dtype[Any]
     """BLOCK_DTYPE."""
 
+    lz4: bool
+    """Data is compressed with LZ4."""
+
     mode: str
     """BLOCK_CREATION."""
 
     def __init__(self, value: int, /) -> None:
+        value = int(value)
         self.mode = BLOCK_CREATION.get(value & 0xF, 'UNKNOWN')
         self.contents = BLOCK_CONTENT.get(value & 0xF0, 'UNKNOWN_BLOCK')
         self.dtype = BLOCK_DTYPE.get(value & 0xF00, numpy.dtype('<u2'))
-        self.compress = bool(value & 0x1000)
+        self.coincidence = bool(value & 0x2000)  # bit 13
+        self.lz4 = bool(value & 0x4000)  # bit 14
+        self.compress = bool(value & 0x5000)  # bit 12 (ZIP) or bit 14
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__} {self.mode} {self.contents}>'
@@ -1145,6 +1291,8 @@ class BlockType:
             # f'contents: {self.contents}',
             f'dtype: {self.dtype}',
             f'compress: {self.compress}',
+            f'lz4: {self.lz4}',
+            f'coincidence: {self.coincidence}',
         )
 
 
@@ -1168,7 +1316,17 @@ class FileRevision:
     """BH module subtype."""
 
     def __init__(self, value: int, /) -> None:
+        value = int(value)
         self.revision = value & 0b1111
+        if self.revision >= 14:
+            module_code = (value & 0xFFF0) >> 4
+            self.subtype = 'None'
+        else:
+            module_code = (value & 0xFF0) >> 4
+            self.subtype = {
+                0x0: 'None',
+                0x1: 'SPC-150NX-12',
+            }.get(value >> 12, 'Unknown')
         self.module = {
             0x20: 'SPC-130',
             0x21: 'SPC-600',
@@ -1197,12 +1355,8 @@ class FileRevision:
             0x8B: 'SPC-QC-104',
             0x8C: 'SPC-QC-004',
             0x8D: 'SPC-QC-106',
-            0x8E: 'SPC-QC-004',  # duplicate per C header
-        }.get((value & 0xFF0) >> 4, 'Unknown')
-        self.subtype = {
-            0x0: 'None',
-            0x1: 'SPC-150NX-12',
-        }.get(value >> 12, 'Unknown')
+            0x8E: 'SPC-QC-006',
+        }.get(module_code, 'Unknown')
 
     def __repr__(self) -> str:
         subtype = '' if self.subtype == 'None' else f' {self.subtype!r}'
@@ -1235,7 +1389,7 @@ FILE_HEADER: Record = [
 SETUP_BIN_HDR: Record = [
     ('soft_rev', 'u4'),
     ('para_length', 'u4'),
-    ('reserved1', 'u4'),
+    ('file_rev', 'f4'),
     ('reserved2', 'u2'),
 ]
 """BHBinHdr structure."""
@@ -1341,13 +1495,21 @@ SETUP_BIN_GVDDATA: Record = [
     ('scan_rate', 'i2'),
     ('park_center', 'i2'),
     ('scan_trigger', 'i2'),
+    ('control2', 'u2'),
     ('l3_power', 'f4'),
     ('l4_power', 'f4'),
     ('multiplex2', 'u2'),
     ('multiplex3', 'u2'),
     ('lasers_active1_4', 'u2'),
-    ('control2', 'u2'),
-    ('sreserve', 'i2'),
+    ('point_type', 'u2'),
+    ('point_time_resol', 'f4'),
+    ('point_time', 'f4'),
+    ('pt_multiplex1', 'u2'),
+    ('pt_multiplex2', 'u2'),
+    ('pt_multiplex3', 'u2'),
+    ('pt_multiplex4', 'u2'),
+    ('control3', 'u2'),
+    ('reserve', 'S62'),
 ]
 """GVDData structure.
 
@@ -1362,6 +1524,12 @@ SETUP_BIN_GVDPARAM: Record1 = [
     ('DAC_per_step', 'u2'),
     ('line_pulse_shift', 'i2'),
     ('pnl_attr', SETUP_BIN_BHPANELATTR),
+    ('point_time_unit', 'i2'),
+    ('lock_time', 'i2'),
+    ('MP_PL_multiplex', '4u2'),
+    ('SP_FL_multiplex', '4u2'),
+    ('SP_PL_multiplex', 'u2'),
+    ('reserve', 'S42'),
 ]
 """GVDParam structure."""
 
@@ -1381,12 +1549,26 @@ MEASURE_STOP_INFO: Record = [
     ('max_cfd_rate', 'f4'),
     ('max_tac_rate', 'f4'),
     ('max_adc_rate', 'f4'),
-    ('reserved1', 'i4'),
-    ('reserved2', 'f4'),
+    ('stop_info_extension_used', 'i1'),
+    ('reserved1', 'S3'),
+    ('reserved2', 'f4'),  # undocumented field
 ]
 """MeasStopInfo structure.
 
 Info collected when measurement finished.
+"""
+
+
+MEASURE_STOP_INFO_EXT: Record = [
+    ('min_ch4_rate', 'f4'),
+    ('max_ch4_rate', 'f4'),
+    ('min_ch5_rate', 'f4'),
+    ('max_ch5_rate', 'f4'),
+    ('reserve', '8f4'),
+]
+"""MeasStopInfoExt structure.
+
+Extension of MeasStopInfo for additional rate info for SPC-QC-x06 module.
 """
 
 
@@ -1448,7 +1630,7 @@ Extension of MeasHISTInfo for additional histograms info.
 """
 
 
-MEASURE_INFO_EXT: Record = [
+MEASURE_INFO_EXT: Record1 = [
     ('DCU_in_use', 'u4'),
     ('dcu_ser_no', '4S16'),
     ('scope_name', 'S32'),
@@ -1469,7 +1651,11 @@ MEASURE_INFO_EXT: Record = [
     ('cfd_th6_tdc', 'f4'),
     ('cfd_zc5_tdc', 'f4'),
     ('cfd_zc6_tdc', 'f4'),
-    ('reserve', 'S1225'),
+    ('StopInfoExt', MEASURE_STOP_INFO_EXT),
+    ('mwl_ser_no', 'S32'),
+    ('mwl_grating', 'i4'),
+    ('mwl_wav', 'f4'),
+    ('reserve', 'S1137'),
 ]
 """MeasInfoExt structure.
 
@@ -1750,3 +1936,84 @@ def stripnull(
 def logger() -> logging.Logger:
     """Return logger for sdtfile module."""
     return logging.getLogger('sdtfile')
+
+
+def askopenfilename(**kwargs: Any) -> str:
+    """Return file name(s) from Tkinter's file open dialog."""
+    from tkinter import Tk, filedialog
+
+    root = Tk()
+    root.withdraw()
+    root.update()
+    filenames = filedialog.askopenfilename(**kwargs)
+    root.destroy()
+    return filenames
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Command line usage main function.
+
+    Preview image and metadata in specified files or all files in directory.
+
+    ``python -m sdtfile file_or_directory``
+
+    """
+    import time
+    from glob import glob
+
+    from matplotlib import pyplot
+
+    imshow: Any
+    try:
+        from tifffile import imshow
+    except ImportError:
+        imshow = None
+
+    if argv is None:
+        argv = sys.argv
+
+    if len(argv) == 1:
+        path = askopenfilename(
+            title='Select an Imspector image file',
+            filetypes=[('SDT files', '*.sdt'), ('All files', '*')],
+        )
+        files = [path] if path else []
+    elif '*' in argv[1]:
+        files = glob(argv[1])
+    elif os.path.isdir(argv[1]):
+        files = glob(f'{argv[1]}/**/*.sdt', recursive=True)
+    else:
+        files = argv[1:]
+
+    for fname in files:
+        try:
+            start = time.perf_counter()
+            with SdtFile(fname) as sdt:
+                duration = time.perf_counter() - start
+                print(sdt, end='\n\n')  # noqa: T201
+                for i, data in enumerate(sdt.data):
+                    print(f'{data.shape} {data.dtype}')  # noqa: T201
+                    if imshow is not None:
+                        imshow(
+                            numpy.moveaxis(data, -1, 0),
+                            title=f'{fname} [{i}]',
+                            show=False,
+                            photometric='minisblack',
+                            interpolation='None',
+                        )
+            print(f'\nDuration: {duration * 1e3:.1f} ms')  # noqa: T201
+            if imshow is not None:
+                pyplot.show()
+        except Exception:
+            import traceback
+
+            print('Failed to read', fname)  # noqa: T201
+            traceback.print_exc()
+            print()  # noqa: T201
+            continue
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
