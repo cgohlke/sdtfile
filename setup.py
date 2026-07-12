@@ -97,11 +97,17 @@ setup(
         'Source Code': 'https://github.com/cgohlke/sdtfile',
         'Documentation': 'https://www.cgohlke.com/docs/sdtfile/',
     },
-    entry_points={'console_scripts': ['sdt2dat = sdtfile.sdt2dat:main']},
+    entry_points={
+        'console_scripts': [
+            'sdtfile = sdtfile.sdtfile:main',
+            'sdt2dat = sdtfile.sdt2dat:main',
+        ]
+    },
     packages=['sdtfile'],
     package_data={'sdtfile': ['py.typed']},
     python_requires='>=3.12',
     install_requires=['numpy>=2.1'],
+    extras_require={'all': ['imagecodecs', 'tifffile', 'matplotlib']},
     platforms=['any'],
     classifiers=[
         'Development Status :: 4 - Beta',
