@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.29
+:Version: 2026.7.12
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -23,7 +23,7 @@ Quickstart
 Install the sdtfile package and all dependencies from the
 `Python Package Index <https://pypi.org/project/sdtfile/>`_::
 
-    python -m pip install -U sdtfile
+    python -m pip install -U sdtfile[all]
 
 See `Examples`_ for using the programming interface.
 
@@ -37,10 +37,21 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.0
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
+- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
+  (optional for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.7.12
+
+- Fix BlockNo attribute names (breaking).
+- Try power-of-two padded image shapes when block/adc_re > image_y * image_x.
+- Support LZ4 compressed and larger than 4 GB data blocks (not tested).
+- Update MeasureInfoExt structure with MeasStopInfoExt and MWL fields.
+- Use BinaryFile for file I/O.
+- Add simple CLI to preview data and metadata in SDT files.
 
 2026.6.29
 
@@ -87,7 +98,7 @@ References
 Examples
 --------
 
-Read image and metadata from a "SPC Setup & Data File":
+Read image and metadata from an "SPC Setup & Data File":
 
 .. code-block:: python
 
@@ -106,7 +117,7 @@ Read image and metadata from a "SPC Setup & Data File":
     (256,)
     >>> sdt.close()
 
-Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
+Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
 .. code-block:: python
 
@@ -121,7 +132,7 @@ Read data and metadata from a "SPC Setup & Data File" with multiple data sets:
     850
     >>> sdt.close()
 
-Read image data from a "SPC FCS Data File" as numpy array:
+Read image data from an "SPC FCS Data File" as numpy array:
 
 .. code-block:: python
 
@@ -135,3 +146,7 @@ Read image data from a "SPC FCS Data File" as numpy array:
     >>> sdt.times[0].shape
     (256,)
     >>> sdt.close()
+
+View the image and metadata in an SDT file from the console::
+
+    $ python -m sdtfile image.sdt
