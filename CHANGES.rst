@@ -1,6 +1,15 @@
 Revisions
 ---------
 
+2026.7.12
+
+- Fix BlockNo attribute names (breaking).
+- Try power-of-two padded image shapes when block/adc_re > image_y * image_x.
+- Support LZ4 compressed and larger than 4 GB data blocks (not tested).
+- Update MeasureInfoExt structure with MeasStopInfoExt and MWL fields.
+- Use BinaryFile for file I/O.
+- Add simple CLI to preview data and metadata in SDT files.
+
 2026.6.29
 
 - Fix reading SDT files with truncated embedded ZIP files (#8).
