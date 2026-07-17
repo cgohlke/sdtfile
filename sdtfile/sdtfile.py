@@ -41,7 +41,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.12
+:Version: 2026.7.17
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -67,9 +67,16 @@ This revision was tested with the following requirements and dependencies
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
 - `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
   (optional for LZ4 compressed data blocks)
+- `Lz4 <https://pypi.org/project/lz4/>`_ 4.4.5
+  (optional alternative to imagecodecs for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.7.17
+
+- Fix decompression of LZ4-compressed data blocks.
+- Add fallback to lz4 module if imagecodecs is not installed.
 
 2026.7.12
 
@@ -176,7 +183,7 @@ View the image and metadata in an SDT file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.7.12'
+__version__ = '2026.7.17'
 
 __all__ = [
     'BlockNo',
@@ -203,7 +210,7 @@ from typing import TYPE_CHECKING, ClassVar, final
 import numpy
 
 if TYPE_CHECKING:
-    from types import TracebackType
+    from types import ModuleType, TracebackType
     from typing import IO, Any, Literal, Self
 
     from numpy.typing import DTypeLike, NDArray
@@ -250,6 +257,7 @@ class BinaryFile:
     _name: str  # name of file or handle
     _close: bool  # file needs to be closed
     _closed: bool  # file is closed
+    _memmap: bool  # open companion files using memmap
     _lock: contextlib.AbstractContextManager[Any]
     _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
 
@@ -268,6 +276,7 @@ class BinaryFile:
         self._name = 'Unnamed'
         self._close = False
         self._closed = False
+        self._memmap = bool(memmap)
         self._lock = contextlib.nullcontext()
 
         if isinstance(file, (str, os.PathLike)):
@@ -439,6 +448,34 @@ class BinaryFile:
             fh.seek(offset)
             return fh.read(size)
 
+    def _read_into(self, offset: int, buffer: NDArray[numpy.uint8], /) -> int:
+        """Read bytes from file at given offset into existing buffer.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            buffer: Flat, writable uint8 numpy array to read into.
+
+        Returns:
+            Number of bytes read.
+
+        """
+        nbytes = len(buffer)
+        mv = self._mv
+        if mv is not None:
+            n = min(nbytes, max(0, len(mv) - offset))
+            buffer[:n] = numpy.frombuffer(mv[offset : offset + n], numpy.uint8)
+            return n
+
+        fh = self._fh
+        with self._lock:
+            fh.seek(offset)
+            try:
+                return fh.readinto(buffer)  # type: ignore[attr-defined, no-any-return]
+            except (AttributeError, OSError):
+                data = fh.read(nbytes)
+                buffer[:] = numpy.frombuffer(data, numpy.uint8)
+                return len(data)
+
     def _read_array(
         self,
         offset: int,
@@ -468,7 +505,7 @@ class BinaryFile:
             writable:
                 By default, return read-only array from memory-mapped file.
                 Prevents accidental modification of underlying writable file.
-                Has no effect for non-memory-mapped files (always writeable).
+                Has no effect for non-memory-mapped files (always writable).
             truncate:
                 Allow partial reads of array.
                 If None, log error on partial read.
@@ -740,31 +777,9 @@ class SdtFile(BinaryFile):
                     data_offset, next_offset - data_offset
                 )
                 if bt.lz4:
-                    # TODO: test this
-                    try:
-                        from imagecodecs import lz4_decode
-                    except ImportError as exc:
-                        msg = (
-                            'imagecodecs is required to read '
-                            'LZ4-compressed SDT files'
-                        )
-                        raise ImportError(msg) from exc
-                    databytes = lz4_decode(
-                        compressed, out=int(bh.block_length)
-                    )
+                    databytes = lz4frame_decode(compressed, bh.block_length)
                 else:
-                    # TODO: replace this with simple ZIP parsing
-                    # and direct zlib.decompress?
-                    try:
-                        # MemoryReader avoids extra copy of compressed
-                        with zipfile.ZipFile(MemoryReader(compressed)) as zf:
-                            databytes = zf.read(zf.filelist[0].filename)
-                    except zipfile.BadZipFile:
-                        # the EOCD record may be missing one trailing byte
-                        # https://github.com/cgohlke/sdtfile/issues/8
-                        bio = io.BytesIO(bytes(compressed) + b'\x00')
-                        with zipfile.ZipFile(bio) as zf:
-                            databytes = zf.read(zf.filelist[0].filename)
+                    databytes = zipfile_decode(compressed)
                 data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
                 data = self._read_array(
@@ -822,40 +837,6 @@ class SdtFile(BinaryFile):
             except AttributeError:
                 fcs_points = -1
 
-            image_shape_from_padded: tuple[int, int] | None = None
-            if (
-                bt.contents in {'IMG_BLOCK', 'IMG_MCS_BLOCK'}
-                and image_x > 0
-                and image_y > 0
-                and dsize % adc_re == 0
-            ):
-                ncurves = dsize // adc_re
-                image_pixels = image_x * image_y
-                if ncurves > image_pixels:
-                    # Some files store image curves in power-of-two padded
-                    # image dimensions. Try width-only, height-only, and both.
-                    padded_x = 1 << (image_x - 1).bit_length()
-                    padded_y = 1 << (image_y - 1).bit_length()
-                    candidates = [
-                        shape
-                        for shape in {
-                            (image_y, padded_x),
-                            (padded_y, image_x),
-                            (padded_y, padded_x),
-                        }
-                        if shape[0] >= image_y
-                        and shape[1] >= image_x
-                        and ncurves == shape[0] * shape[1]
-                    ]
-                    if len(candidates) == 1:
-                        image_shape_from_padded = candidates[0]
-                    elif len(candidates) > 1:
-                        logger().warning(
-                            f'ambiguous padded image shape for '
-                            f'{image_y=} {image_x=} and {ncurves=}; '
-                            f'keeping fallback reshape'
-                        )
-
             # TODO: review how data are shaped for different block types
             if bt.contents == 'FCS_BLOCK' and fcs_points > 0:
                 if dsize != fcs_points:
@@ -864,8 +845,12 @@ class SdtFile(BinaryFile):
                 data = data.reshape((scan_y, scan_x, adc_re))
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape((image_y, image_x, adc_re))
-            elif image_shape_from_padded is not None:
-                data = data.reshape((*image_shape_from_padded, adc_re))
+            elif (
+                padded_image_shape := self._padded_image_shape(
+                    bt.contents, image_x, image_y, adc_re, dsize
+                )
+            ) is not None:
+                data = data.reshape((*padded_image_shape, adc_re))
                 data = data[:image_y, :image_x, :]
             elif dsize == scan_x * scan_y * scan_rx * scan_ry * adc_re:
                 data = data.reshape((scan_ry, scan_rx, scan_y, scan_x, adc_re))
@@ -916,6 +901,53 @@ class SdtFile(BinaryFile):
                     time *= mi.tac_r / (tac_g * adc_re)
             self.times.append(time)
             offset = next_offset
+
+    @staticmethod
+    def _padded_image_shape(
+        contents: str,
+        image_x: int,
+        image_y: int,
+        adc_re: int,
+        dsize: int,
+    ) -> tuple[int, int] | None:
+        """Return padded image shape for power-of-two padded image data."""
+        if (
+            contents not in {'IMG_BLOCK', 'IMG_MCS_BLOCK'}
+            or image_x <= 0
+            or image_y <= 0
+            or dsize % adc_re != 0
+        ):
+            return None
+
+        ncurves = dsize // adc_re
+        image_pixels = image_x * image_y
+        if ncurves <= image_pixels:
+            return None
+
+        # some files store image curves in power-of-two padded dimensions
+        # try width-only, height-only, and both
+        padded_x = 1 << (image_x - 1).bit_length()
+        padded_y = 1 << (image_y - 1).bit_length()
+        candidates = [
+            shape
+            for shape in {
+                (image_y, padded_x),
+                (padded_y, image_x),
+                (padded_y, padded_x),
+            }
+            if shape[0] >= image_y
+            and shape[1] >= image_x
+            and ncurves == shape[0] * shape[1]
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            logger().warning(
+                f'ambiguous padded image shape for '
+                f'{image_y=} {image_x=} and {ncurves=}; '
+                f'keeping fallback reshape'
+            )
+        return None
 
     def block_measure_info(self, block: int, /) -> numpy.recarray[Any, Any]:
         """Return measure_info record for data block.
@@ -1551,7 +1583,7 @@ MEASURE_STOP_INFO: Record = [
     ('max_adc_rate', 'f4'),
     ('stop_info_extension_used', 'i1'),
     ('reserved1', 'S3'),
-    ('reserved2', 'f4'),  # undocumented field
+    ('reserved2', 'f4'),
 ]
 """MeasStopInfo structure.
 
@@ -1883,6 +1915,41 @@ def record_str(name: str, record: numpy.recarray[Any, Any] | None) -> str:
         else:
             lines.append(f'{key}: {value}')
     return indent(f'{name}:', *lines)
+
+
+def zipfile_decode(data: bytes | memoryview, /) -> bytes:
+    """Return decompressed file from ZIP archive."""
+    # TODO: replace this with simple ZIP parsing and direct zlib.decompress?
+    try:
+        # MemoryReader avoids extra copy of compressed
+        with zipfile.ZipFile(MemoryReader(data)) as zf:
+            return zf.read(zf.filelist[0].filename)
+    except zipfile.BadZipFile:
+        # the EOCD record may be missing one trailing byte
+        # https://github.com/cgohlke/sdtfile/issues/8
+        bio = io.BytesIO(bytes(data) + b'\x00')
+        with zipfile.ZipFile(bio) as zf:
+            return zf.read(zf.filelist[0].filename)
+
+
+def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
+    """Return decoded LZ4 frame."""
+    imagecodecs: ModuleType | None = None
+    with contextlib.suppress(ImportError):
+        import imagecodecs
+    if imagecodecs is not None and imagecodecs.LZ4F.available:
+        return imagecodecs.lz4f_decode(data, out=int(size))  # type: ignore[no-any-return]
+
+    try:
+        import lz4.frame
+    except ImportError:
+        msg = (
+            'the imagecodecs or lz4 packages are required '
+            'to read LZ4-compressed SDT files'
+        )
+        raise ImportError(msg) from None
+
+    return lz4.frame.decompress(data)  # type: ignore[no-any-return]
 
 
 def indent(*args: Any) -> str:
