@@ -1,6 +1,11 @@
 Revisions
 ---------
 
+2026.7.17
+
+- Fix decompression of LZ4-compressed data blocks.
+- Add fallback to lz4 module if imagecodecs is not installed.
+
 2026.7.12
 
 - Fix BlockNo attribute names (breaking).
