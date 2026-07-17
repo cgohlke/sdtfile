@@ -14,7 +14,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.12
+:Version: 2026.7.17
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -40,9 +40,16 @@ This revision was tested with the following requirements and dependencies
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
 - `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
   (optional for LZ4 compressed data blocks)
+- `Lz4 <https://pypi.org/project/lz4/>`_ 4.4.5
+  (optional alternative to imagecodecs for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.7.17
+
+- Fix decompression of LZ4-compressed data blocks.
+- Add fallback to lz4 module if imagecodecs is not installed.
 
 2026.7.12
 
