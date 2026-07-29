@@ -1,6 +1,11 @@
 Revisions
 ---------
 
+2026.7.30
+
+- Add sdtwrite function.
+- Support SET files without measurement description and data blocks.
+
 2026.7.17
 
 - Fix decompression of LZ4-compressed data blocks.
