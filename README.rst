@@ -6,15 +6,14 @@ Read Becker & Hickl SDT files
 
 Sdtfile is a Python library to read SDT files produced by Becker & Hickl
 SPCM software. SDT files contain time correlated single photon counting
-instrumentation parameters and measurement data. Currently only the
-"Setup & Data", "DLL Data", and "FCS Data" formats are supported.
+instrumentation parameters and measurement data.
 
 `Becker & Hickl GmbH <http://www.becker-hickl.de/>`_ is a manufacturer of
 equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.17
+:Version: 2026.7.30
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -36,7 +35,7 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b4 64-bit
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
 - `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
   (optional for LZ4 compressed data blocks)
@@ -45,6 +44,11 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.7.30
+
+- Add sdtwrite function.
+- Support SET files without measurement description and data blocks.
 
 2026.7.17
 
@@ -94,13 +98,29 @@ Revisions
 
 Refer to the CHANGES file for older revisions.
 
+Notes
+-----
+
+SDT files begin with a FILE_HEADER containing byte offsets to four sections:
+an ASCII info block, a setup block (ASCII and/or binary instrument parameters),
+one or more MEASURE_INFO records (CFD/TAC/ADC settings, scan geometry,
+timestamps, module identity), and one or more data blocks each preceded by a
+BLOCK_HEADER encoding the creation mode, content type (FLIM image, FCS, MCS,
+etc.), and element dtype. The data blocks are photon-count histograms shaped
+from MEASURE_INFO fields, typically ``(image_y, image_x, adc_re)`` of type
+uint16/uint32, and may be ZIP or LZ4-compressed.
+
+Currently "Flow Data" are not supported.
+
 References
 ----------
 
 1. W Becker. The bh TCSPC Handbook. 9th Edition. Becker & Hickl GmbH 2021.
    pp 879.
-2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
-   SPCM software installation.
+   https://www.becker-hickl.com/literature/documents/flim/the-bh-tcspc-handbook-9th-edition-2021/
+2. SPC_data_file_structure.h header file.
+   Part of the Becker & Hickl SPCM software installation.
+   https://www.becker-hickl.com/products/spcm-data-acquisition-software/
 
 Examples
 --------
@@ -116,13 +136,22 @@ Read image and metadata from an "SPC Setup & Data File":
     'SPC Setup & Data File'
     >>> int(sdt.measure_info[0].scan_x)
     128
+    >>> float(sdt.measure_info[0].tac_r)  # doctest: +NUMBER
+    5.0e-08
     >>> len(sdt.data)
     1
-    >>> sdt.data[0].shape
+    >>> image = sdt.data[0]
+    >>> image.shape
     (128, 128, 256)
     >>> sdt.times[0].shape
     (256,)
     >>> sdt.close()
+
+Write image and select metadata to an SDT file:
+
+.. code-block:: python
+
+    >>> sdtwrite('image_out.sdt', image, tac_r=5e-8, compress=True)
 
 Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
