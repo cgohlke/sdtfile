@@ -33,15 +33,14 @@
 
 Sdtfile is a Python library to read SDT files produced by Becker & Hickl
 SPCM software. SDT files contain time correlated single photon counting
-instrumentation parameters and measurement data. Currently only the
-"Setup & Data", "DLL Data", and "FCS Data" formats are supported.
+instrumentation parameters and measurement data.
 
 `Becker & Hickl GmbH <http://www.becker-hickl.de/>`_ is a manufacturer of
 equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.17
+:Version: 2026.7.30
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,7 +62,7 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b3 64-bit
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b4 64-bit
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
 - `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
   (optional for LZ4 compressed data blocks)
@@ -72,6 +71,11 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.7.30
+
+- Add sdtwrite function.
+- Support SET files without measurement description and data blocks.
 
 2026.7.17
 
@@ -121,13 +125,29 @@ Revisions
 
 Refer to the CHANGES file for older revisions.
 
+Notes
+-----
+
+SDT files begin with a FILE_HEADER containing byte offsets to four sections:
+an ASCII info block, a setup block (ASCII and/or binary instrument parameters),
+one or more MEASURE_INFO records (CFD/TAC/ADC settings, scan geometry,
+timestamps, module identity), and one or more data blocks each preceded by a
+BLOCK_HEADER encoding the creation mode, content type (FLIM image, FCS, MCS,
+etc.), and element dtype. The data blocks are photon-count histograms shaped
+from MEASURE_INFO fields, typically ``(image_y, image_x, adc_re)`` of type
+uint16/uint32, and may be ZIP or LZ4-compressed.
+
+Currently "Flow Data" are not supported.
+
 References
 ----------
 
 1. W Becker. The bh TCSPC Handbook. 9th Edition. Becker & Hickl GmbH 2021.
    pp 879.
-2. SPC_data_file_structure.h header file. Part of the Becker & Hickl
-   SPCM software installation.
+   https://www.becker-hickl.com/literature/documents/flim/the-bh-tcspc-handbook-9th-edition-2021/
+2. SPC_data_file_structure.h header file.
+   Part of the Becker & Hickl SPCM software installation.
+   https://www.becker-hickl.com/products/spcm-data-acquisition-software/
 
 Examples
 --------
@@ -141,13 +161,20 @@ Read image and metadata from an "SPC Setup & Data File":
 'SPC Setup & Data File'
 >>> int(sdt.measure_info[0].scan_x)
 128
+>>> float(sdt.measure_info[0].tac_r)  # doctest: +NUMBER
+5.0e-08
 >>> len(sdt.data)
 1
->>> sdt.data[0].shape
+>>> image = sdt.data[0]
+>>> image.shape
 (128, 128, 256)
 >>> sdt.times[0].shape
 (256,)
 >>> sdt.close()
+
+Write image and select metadata to an SDT file:
+
+>>> sdtwrite('image_out.sdt', image, tac_r=5e-8, compress=True)
 
 Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
@@ -183,7 +210,7 @@ View the image and metadata in an SDT file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.7.17'
+__version__ = '2026.7.30'
 
 __all__ = [
     'BlockNo',
@@ -193,11 +220,14 @@ __all__ = [
     'SdtFile',
     'SetupBlock',
     '__version__',
+    'sdtwrite',
 ]
 
 import contextlib
+import datetime
 import io
 import logging
+import math
 import mmap
 import os
 import struct
@@ -213,7 +243,7 @@ if TYPE_CHECKING:
     from types import ModuleType, TracebackType
     from typing import IO, Any, Literal, Self
 
-    from numpy.typing import DTypeLike, NDArray
+    from numpy.typing import ArrayLike, DTypeLike, NDArray
 
     Record = list[tuple[str, str]]
     Record1 = list[tuple[str, str | Record]]
@@ -705,6 +735,7 @@ class SdtFile(BinaryFile):
                 'SPC Setup & Data File',
                 'SPC FCS Data File',
                 'SPC DLL Data File',
+                'SPC Setup Script File',
                 'SPC Setup & Data File',  # fallback for corrupted file IDs
             }:
                 msg = f'{self.info.id!r} not supported'
@@ -726,19 +757,23 @@ class SdtFile(BinaryFile):
             # SPC DLL data file contain no setup, only data
             self.setup = None
 
-        # read measurement description blocks
+        # read measurement description blocks (not present in SET files)
         self.measure_info = []
-        dtype = record_dtype(
-            MEASURE_INFO, int(self.header.meas_desc_block_length)
-        )
-        base_offs = int(self.header.meas_desc_block_offs)
-        block_len = int(self.header.meas_desc_block_length)
-        for i in range(self.header.no_of_meas_desc_blocks):
-            self.measure_info.append(
-                numpy.rec.array(
-                    self._read_array(base_offs + i * block_len, 1, dtype)
-                )[0]
+        if (
+            int(self.header.no_of_meas_desc_blocks) > 0
+            and int(self.header.meas_desc_block_length) > 0
+        ):
+            dtype = record_dtype(
+                MEASURE_INFO, int(self.header.meas_desc_block_length)
             )
+            base_offs = int(self.header.meas_desc_block_offs)
+            block_len = int(self.header.meas_desc_block_length)
+            for i in range(self.header.no_of_meas_desc_blocks):
+                self.measure_info.append(
+                    numpy.rec.array(
+                        self._read_array(base_offs + i * block_len, 1, dtype)
+                    )[0]
+                )
 
         rev = FileRevision(self.header.revision)
         if rev.revision >= 15:
@@ -846,6 +881,13 @@ class SdtFile(BinaryFile):
             elif dsize == image_x * image_y * adc_re:
                 data = data.reshape((image_y, image_x, adc_re))
             elif (
+                padded_scan_shape := self._padded_image_shape(
+                    bt.contents, scan_x, scan_y, adc_re, dsize
+                )
+            ) is not None:
+                data = data.reshape((*padded_scan_shape, adc_re))
+                data = data[:scan_y, :scan_x, :]
+            elif (
                 padded_image_shape := self._padded_image_shape(
                     bt.contents, image_x, image_y, adc_re, dsize
                 )
@@ -912,7 +954,7 @@ class SdtFile(BinaryFile):
     ) -> tuple[int, int] | None:
         """Return padded image shape for power-of-two padded image data."""
         if (
-            contents not in {'IMG_BLOCK', 'IMG_MCS_BLOCK'}
+            contents not in {'IMG_BLOCK', 'IMG_MCS_BLOCK', 'PAGE_BLOCK'}
             or image_x <= 0
             or image_y <= 0
             or dsize % adc_re != 0
@@ -1359,36 +1401,7 @@ class FileRevision:
                 0x0: 'None',
                 0x1: 'SPC-150NX-12',
             }.get(value >> 12, 'Unknown')
-        self.module = {
-            0x20: 'SPC-130',
-            0x21: 'SPC-600',
-            0x22: 'SPC-630',
-            0x23: 'SPC-700',
-            0x24: 'SPC-730',
-            0x25: 'SPC-830',
-            0x26: 'SPC-140',
-            0x27: 'SPC-930',
-            0x28: 'SPC-150',
-            0x29: 'DPC-230',
-            0x2A: 'SPC-130EM',
-            0x2B: 'SPC-160',
-            0x2E: 'SPC-150N',
-            0x80: 'SPC-150NX',
-            0x81: 'SPC-160X',
-            0x82: 'SPC-160PCIE',
-            0x83: 'SPC-130EMN',
-            0x84: 'SPC-180N',
-            0x85: 'SPC-180NX',
-            0x86: 'SPC-180NXX',
-            0x87: 'SPC-180N-USB',
-            0x88: 'SPC-130IN',
-            0x89: 'SPC-130INX',
-            0x8A: 'SPC-130INXX',
-            0x8B: 'SPC-QC-104',
-            0x8C: 'SPC-QC-004',
-            0x8D: 'SPC-QC-106',
-            0x8E: 'SPC-QC-006',
-        }.get(module_code, 'Unknown')
+        self.module = MODULE_CODES.get(module_code, 'Unknown')
 
     def __repr__(self) -> str:
         subtype = '' if self.subtype == 'None' else f' {self.subtype!r}'
@@ -1855,6 +1868,38 @@ BLOCK_DTYPE: dict[int, numpy.dtype[Any]] = {
     0x200: numpy.dtype('<f8'),
 }
 
+# Module codes for SPC-xxx modules
+MODULE_CODES: dict[int, str] = {
+    0x20: 'SPC-130',
+    0x21: 'SPC-600',
+    0x22: 'SPC-630',
+    0x23: 'SPC-700',
+    0x24: 'SPC-730',
+    0x25: 'SPC-830',
+    0x26: 'SPC-140',
+    0x27: 'SPC-930',
+    0x28: 'SPC-150',
+    0x29: 'DPC-230',
+    0x2A: 'SPC-130EM',
+    0x2B: 'SPC-160',
+    0x2E: 'SPC-150N',
+    0x80: 'SPC-150NX',
+    0x81: 'SPC-160X',
+    0x82: 'SPC-160PCIE',
+    0x83: 'SPC-130EMN',
+    0x84: 'SPC-180N',
+    0x85: 'SPC-180NX',
+    0x86: 'SPC-180NXX',
+    0x87: 'SPC-180N-USB',
+    0x88: 'SPC-130IN',
+    0x89: 'SPC-130INX',
+    0x8A: 'SPC-130INXX',
+    0x8B: 'SPC-QC-104',
+    0x8C: 'SPC-QC-004',
+    0x8D: 'SPC-QC-106',
+    0x8E: 'SPC-QC-006',
+}
+
 HEADER_VALID: dict[int, bool] = {0x1111: False, 0x5555: True}
 
 INFO_IDS: dict[str, str] = {
@@ -1867,6 +1912,344 @@ INFO_IDS: dict[str, str] = {
         'curves for each used routing channel'
     ),
 }
+
+
+def sdtwrite(
+    file: str | os.PathLike[str] | IO[bytes],
+    data: ArrayLike,
+    /,
+    tac_r: float,
+    *,
+    tac_g: int = 1,
+    col_t: float | None = None,
+    pix_time: float | None = None,
+    image_size: float | None = None,
+    mod_type: str | None = None,
+    timestamp: datetime.datetime | None = None,
+    title: str | None = None,
+    contents: str | None = None,
+    compress: bool | None = None,
+    meas_mode: Literal['scan', 'image'] | None = None,
+    mode: Literal['w', 'wb', 'x', 'xb'] | None = None,
+) -> None:
+    """Write photon-count histogram image to SDT file.
+
+    Parameters:
+        file:
+            File name or writable binary stream.
+        data:
+            TCSPC histogram image of shape ``(scan_y, scan_x, adc_re)``.
+            The dtype must be ``uint16`` or ``uint32``.
+        tac_r:
+            TAC range in s.
+            Sets ``MeasureInfo.tac_r``.
+            Represents the full TCSPC acquisition window, typically equal to
+            the laser sync period (inverse of the repetition rate).
+            Bin width = ``tac_r / (tac_g * adc_re)``.
+        tac_g:
+            TAC gain, integer in range [1, 15].
+            Sets ``MeasureInfo.tac_g``.
+        col_t:
+            Total collection time in s.
+            Sets ``MeasureInfo.col_t``.
+            Defaults to ``pix_time * scan_x * scan_y`` when ``pix_time`` is
+            given, otherwise 0.
+        pix_time:
+            Pixel dwell time in s.
+            Sets ``MeasureInfo.pix_time`` and ``MeasHISTInfoExt.pixel_time``.
+        image_size:
+            Physical image field of view in micrometers.
+            Sets ``MeasureInfoExt.image_size``.
+        mod_type:
+            BH module type string, for example ``'SPC-150'``.
+            Sets ``MeasureInfo.mod_type`` and encodes the module code in
+            ``FILE_HEADER.revision``.
+        timestamp:
+            Measurement date and time.
+            Sets ``MeasureInfo.time`` and ``MeasureInfo.date``.
+            Defaults to the current UTC time.
+        title:
+            Text written to ``Title`` line of ``*IDENTIFICATION`` block.
+            Only the first line is written.
+        contents:
+            Text written to ``Contents`` line of ``*IDENTIFICATION`` block.
+        compress:
+            Compress data block with ZIP (deflate).
+            Defaults to False.
+        meas_mode:
+            Acquisition mode.
+            ``'scan'`` writes "SPC Setup & Data File" using ``PAGE_BLOCK``.
+            ``'image'`` writes "SPC FCS Data File" using ``IMG_BLOCK``.
+            Defaults to ``'scan'``.
+        mode:
+            File open mode.
+            Defaults to ``'wb'`` (overwrite).
+            Use ``'xb'`` to raise ``FileExistsError`` if the file exists.
+
+    """
+    data = numpy.asarray(data)
+    if data.ndim != 3:
+        msg = f'data must be 3-D, got {data.ndim}-D'
+        raise ValueError(msg)
+    if not numpy.issubdtype(data.dtype, numpy.unsignedinteger):
+        msg = f'data dtype must be unsigned integer, got {data.dtype}'
+        raise ValueError(msg)
+    if data.dtype.itemsize <= 2:
+        block_dtype = 0x000
+        data = numpy.ascontiguousarray(data, dtype='<u2')
+    elif data.dtype.itemsize == 4:
+        block_dtype = 0x100
+        data = numpy.ascontiguousarray(data, dtype='<u4')
+    else:
+        msg = f'{data.dtype=} not supported; use uint16 or uint32'
+        raise ValueError(msg)
+
+    scan_y, scan_x, adc_re = data.shape
+
+    if adc_re > 32767 and adc_re != 65536:
+        msg = f'{adc_re=} must be <= 32767 or exactly 65536'
+        raise ValueError(msg)
+
+    orig_x = scan_x
+    orig_y = scan_y
+
+    # pad dimensions to next power of two when needed
+    # padded dims are stored in scan_x/scan_y or image_x/image_y
+    padded_x = (
+        1 << (scan_x - 1).bit_length() if scan_x & (scan_x - 1) else scan_x
+    )
+    padded_y = (
+        1 << (scan_y - 1).bit_length() if scan_y & (scan_y - 1) else scan_y
+    )
+    if padded_x != scan_x or padded_y != scan_y:
+        pad = numpy.zeros((padded_y, padded_x, adc_re), dtype=data.dtype)
+        pad[:orig_y, :orig_x, :] = data
+        data = pad
+
+    if col_t is None:
+        col_t = 0.0
+        if pix_time is not None:
+            col_t = float(pix_time) * orig_x * orig_y
+
+    tac_g = int(tac_g)
+    if not 1 <= tac_g <= 15:
+        msg = f'{tac_g=} out of range [1, 15]'
+        raise ValueError(msg)
+
+    if mod_type is None:
+        mod_type = 'SPC-150'
+
+    if title is not None:
+        title = (title.splitlines() or [''])[0].strip()
+    title = title or 'Created by sdtfile.py'
+
+    if timestamp is None:
+        timestamp = datetime.datetime.now(tz=datetime.UTC)
+    date_str = timestamp.strftime('%Y-%m-%d')
+    time_str = timestamp.strftime('%H:%M:%S')
+
+    soft_rev = 992
+
+    # *IDENTIFICATION file info block
+    if meas_mode is None:
+        meas_mode = 'scan'
+    if meas_mode == 'scan':
+        info_id = '\x04SPC Setup & Data File\x04'
+        info_ver = f'1  {soft_rev} M 2.00'
+    else:
+        info_id = '\x04SPC FCS Data File\x04'
+        info_ver = f'3  {soft_rev} M'
+    info_bytes = '\r\n'.join(
+        (
+            '*IDENTIFICATION',
+            f'  ID        : {info_id}',
+            f'  Title     : {title}',
+            f'  Version   : {info_ver}',
+            f'  Revision  : {math.log2(adc_re):.0f} bits ADC',
+            f'  Date      : {date_str}',
+            f'  Time      : {time_str}',
+            '  Author    : Unknown',
+            '  Company   : Unknown',
+            f'  Contents  : {contents or "Unknown"}',
+            '*END',
+            '',
+            '',
+        )
+    ).encode('windows-1250')
+
+    # Setup block: minimal ASCII + BHBinHdr + SPCBinHdr
+    bh_hdr = numpy.zeros(1, dtype=numpy.dtype(SETUP_BIN_HDR))
+    bh_hdr['soft_rev'] = soft_rev
+    bh_hdr['file_rev'] = 2.0
+    spc_hdr = numpy.zeros(1, dtype=numpy.dtype(SETUP_BIN_SPCHDR))
+    bin_structs = bh_hdr.tobytes() + spc_hdr.tobytes()
+    if meas_mode == 'scan':
+        setup_ascii = b''
+    else:
+        setup_ascii = (
+            # for Bio-Formats
+            f'  #SP [SP_IMG_X,I,{padded_x}]\r\n'
+            f'  #SP [SP_IMG_Y,I,{padded_y}]\r\n'
+        ).encode('windows-1250')
+    setup_bytes = b''.join(
+        (
+            b'*SETUP\r\n',
+            setup_ascii,
+            b'*END\r\n\r\n',
+            b'BIN_PARA_BEGIN:\x00',
+            struct.pack('<I', len(bin_structs)),
+            bin_structs,
+            b'\r\n*END\r\n\r\n',
+        )
+    )
+
+    module_code = {v: k for k, v in MODULE_CODES.items()}.get(mod_type, 0x28)
+    file_revision = (module_code << 4) | 15
+
+    # MeasureInfo block
+    mi = numpy.zeros(1, dtype=numpy.dtype(MEASURE_INFO))
+    mi['time'] = time_str.encode('ascii')
+    mi['date'] = date_str.encode('ascii')
+    mi['mod_type'] = mod_type.encode('ascii')[:16]
+    mi['adc_re'] = 0 if adc_re == 65536 else adc_re
+    mi['tac_r'] = tac_r
+    mi['tac_g'] = tac_g
+    mi['col_t'] = col_t
+    mi['page'] = 1
+    if meas_mode == 'scan':
+        mi['meas_mode'] = 9
+        mi['ncx'] = orig_x
+        mi['ncy'] = orig_y
+        mi['scan_x'] = orig_x
+        mi['scan_y'] = orig_y
+        mi['scan_rx'] = 1
+        mi['scan_ry'] = 1
+    else:
+        mi['meas_mode'] = 13
+        mi['ncx'] = 1
+        mi['ncy'] = 1
+        mi['stopt'] = 1  # stopped by command
+        mi['steps'] = 1
+        mi['cycles'] = 1
+        # mi['polarity_l'] = 1  # line marker: rising edge
+        # mi['polarity_f'] = 1  # frame marker: rising edge
+        # mi['polarity_p'] = 1  # pixel marker: rising edge
+        mi['image_x'] = orig_x
+        mi['image_y'] = orig_y
+        mi['image_rx'] = 1
+        mi['image_ry'] = 1
+        mi['StopInfo']['status'] = 0x10  # SPC_CMD_STOP
+        mi['StopInfo']['cur_page'] = 1
+        # line + frame clocks, end-of-frame, first-frame
+        mi['StopInfo']['flags'] = (1 << 1) | (1 << 2) | (1 << 7) | (1 << 8)
+        mi['StopInfo']['cur_step'] = 1
+        mi['StopInfo']['cur_cycle'] = 1
+        # mi['FCSInfo']['fcs_decay_calc'] = 1 << 5  # bit 5: PS FLIM 3D image
+    try:
+        mod_type_code = int(mod_type.rsplit('-', 1)[1])
+    except (IndexError, ValueError):
+        mod_type_code = 0
+    mi['mod_type_code'] = mod_type_code
+    if pix_time is not None:
+        mi['pix_clk'] = 1 if meas_mode == 'scan' else 0
+        mi['pix_time'] = pix_time
+        mi['HISTInfoExt']['pixel_time'] = pix_time
+    if image_size is not None:
+        mi['extension_used'] = 1
+        mi['minfo_ext']['image_size'] = image_size
+
+    meas_info_bytes = mi.tobytes()
+    if meas_mode == 'image':
+        # SPCM writes 512-byte MeasureInfo for FIFO Image mode
+        meas_info_bytes = meas_info_bytes[:512]
+
+    # compute file layout (sections written sequentially)
+    header_size = numpy.dtype(FILE_HEADER).itemsize  # 42
+    block_header_size = numpy.dtype(BLOCK_HEADER).itemsize  # 22
+
+    info_offs = header_size
+    setup_offs = info_offs + len(info_bytes)
+    meas_desc_offs = setup_offs + len(setup_bytes)
+    block_hdr_offs = meas_desc_offs + len(meas_info_bytes)
+    data_offs = block_hdr_offs + block_header_size
+    data_bytes = data.tobytes()
+    if compress:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('data', data_bytes)
+        write_bytes: bytes = buf.getvalue()
+    else:
+        write_bytes = data_bytes
+    next_block_offs = data_offs + len(write_bytes)
+
+    # BHFileBlockHeader revision 15 layout
+    # data_offs_ext/next_block_offs_ext hold bits 32-39 for files >4 GB
+    bh = numpy.zeros(1, dtype=numpy.dtype(BLOCK_HEADER))
+    bh['data_offs'] = data_offs & 0xFFFFFFFF
+    bh['data_offs_ext'] = (data_offs >> 32) & 0xFF
+    bh['next_block_offs'] = next_block_offs & 0xFFFFFFFF
+    bh['next_block_offs_ext'] = (next_block_offs >> 32) & 0xFF
+    if meas_mode == 'scan':
+        # MEAS_DATA_FROM_FILE | PAGE_BLOCK
+        # TODO: use CALC_DATA?
+        bh['block_type'] = 0x03 | 0x10 | block_dtype
+        bh['lblock_no'] = 1
+    else:
+        # FIFO_DATA_FROM_FILE | IMG_BLOCK
+        bh['block_type'] = 0x09 | 0x60 | block_dtype
+        bh['lblock_no'] = (0x6 << 20) | 1  # IMG_BLOCK content bits + channel 1
+    if compress:
+        bh['block_type'] |= 0x1000
+
+    bh['meas_desc_block_no'] = 0
+    bh['block_length'] = len(data_bytes)
+    block_header_bytes = bh.tobytes()
+
+    # bhfile_header
+    fh = numpy.zeros(1, dtype=numpy.dtype(FILE_HEADER))
+    fh['revision'] = file_revision
+    fh['info_offs'] = info_offs
+    fh['info_length'] = len(info_bytes)
+    fh['setup_offs'] = setup_offs
+    fh['setup_length'] = len(setup_bytes)
+    fh['data_block_offs'] = block_hdr_offs
+    fh['no_of_data_blocks'] = 1
+    fh['data_block_length'] = len(data_bytes)
+    fh['meas_desc_block_offs'] = meas_desc_offs
+    fh['no_of_meas_desc_blocks'] = 1
+    fh['meas_desc_block_length'] = len(meas_info_bytes)
+    fh['header_valid'] = 0x5555
+    fh['reserved1'] = 1  # number of channels
+    # compute checksum
+    # sum of all 21 shorts in the 42-byte header must equal 0x55AA
+    file_header_bytes = fh.tobytes()
+    words = numpy.frombuffer(file_header_bytes[:40], dtype='<u2')
+    fh['chksum'] = (0x55AA - int(words.sum())) & 0xFFFF
+    file_header_bytes = fh.tobytes()
+
+    # open and write
+    if mode is None:
+        mode = 'wb'
+    elif mode[-1:] != 'b':
+        mode = mode + 'b'  # type: ignore[assignment]
+
+    close = False
+    fout: IO[bytes]
+    if isinstance(file, (str, os.PathLike)):
+        fout = open(file, mode)  # noqa: SIM115
+        close = True
+    else:
+        fout = file
+    try:
+        fout.write(file_header_bytes)
+        fout.write(info_bytes)
+        fout.write(setup_bytes)
+        fout.write(meas_info_bytes)
+        fout.write(block_header_bytes)
+        fout.write(write_bytes)
+    finally:
+        if close:
+            fout.close()
 
 
 def record_dtype(
@@ -1921,7 +2304,7 @@ def zipfile_decode(data: bytes | memoryview, /) -> bytes:
     """Return decompressed file from ZIP archive."""
     # TODO: replace this with simple ZIP parsing and direct zlib.decompress?
     try:
-        # MemoryReader avoids extra copy of compressed
+        # MemoryReader avoids extra copy of data
         with zipfile.ZipFile(MemoryReader(data)) as zf:
             return zf.read(zf.filelist[0].filename)
     except zipfile.BadZipFile:
