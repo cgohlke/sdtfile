@@ -89,7 +89,7 @@ def tsvwrite(filename, labels, *args):
 
 
 def globalsdat_write(
-    filename, decay, reference, frequency, start=None, stop=None
+    filename, decay, reference, frequency, *, start=None, stop=None
 ):
     """Write decay and reference arrays to Globals DAT file."""
     decay = numpy.squeeze(decay)
@@ -202,6 +202,7 @@ def phasor_plot(real, imag, frequency, highlight=0, ax=None):
 def plot_signals(
     signals,
     times,
+    *,
     background=None,
     highlight=0,
     start=None,
@@ -234,11 +235,11 @@ def analyze(
     filenames,
     reference,
     lifetime,
+    *,
     frequency=None,
     background=0,
     startstop=(None, None),
     highlight=None,
-    *,
     convert=True,
     plot=True,
     axes=None,
@@ -382,7 +383,7 @@ def main():
         help='Convert SDT to DAT files.',
     )
     @click.argument('files', nargs=-1, type=click.Path())
-    def run(
+    def run(  # noqa: PLR0917
         files,
         reference,
         lifetime,
@@ -404,10 +405,10 @@ def main():
                 files,
                 reference,
                 lifetime,
-                frequency,
-                background,
-                startstop,
-                highlight,
+                frequency=frequency,
+                background=background,
+                startstop=startstop,
+                highlight=highlight,
                 convert=convert,
                 plot=plot,
             )
