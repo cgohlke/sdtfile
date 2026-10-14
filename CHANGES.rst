@@ -1,6 +1,12 @@
 Revisions
 ---------
 
+2026.10.14
+
+- Limit decompressed data block size to block_length.
+- Log warnings and recover data for unexpected block sizes.
+- Raise ValueError for invalid meas_mode in sdtwrite.
+
 2026.7.30
 
 - Add sdtwrite function.
