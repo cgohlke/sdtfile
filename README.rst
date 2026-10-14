@@ -13,7 +13,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.30
+:Version: 2026.10.14
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -24,7 +24,8 @@ Install the sdtfile package and all dependencies from the
 
     python -m pip install -U sdtfile[all]
 
-See `Examples`_ for using the programming interface.
+See `Examples`_ and `Documentation <https://www.cgohlke.com/docs/sdtfile/>`_
+for using the programming interface.
 
 Source code and support are available on
 `GitHub <https://github.com/cgohlke/sdtfile>`_.
@@ -35,15 +36,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b4 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
-- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.16, 3.14.8, 3.15.0 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
+- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.10.10
   (optional for LZ4 compressed data blocks)
 - `Lz4 <https://pypi.org/project/lz4/>`_ 4.4.5
   (optional alternative to imagecodecs for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.10.14
+
+- Limit decompressed data block size to block_length.
+- Log warnings and recover data for unexpected block sizes.
+- Raise ValueError for invalid meas_mode in sdtwrite.
 
 2026.7.30
 
@@ -85,15 +92,6 @@ Revisions
 
 2026.1.14
 
-- Improve code quality.
-
-2025.12.12
-
-- Add new SPC modules and MEASURE_INFO_EXT fields.
-- Drop support for Python 3.10.
-
-2025.5.10
-
 - …
 
 Refer to the CHANGES file for older revisions.
@@ -125,6 +123,12 @@ References
 Examples
 --------
 
+Import functions and classes used in these examples:
+
+.. code-block:: python
+
+    >>> from sdtfile import SdtFile, sdtwrite
+
 Read image and metadata from an "SPC Setup & Data File":
 
 .. code-block:: python
@@ -134,9 +138,8 @@ Read image and metadata from an "SPC Setup & Data File":
     588
     >>> sdt.info.id[1:-1]
     'SPC Setup & Data File'
-    >>> int(sdt.measure_info[0].scan_x)
-    128
-    >>> float(sdt.measure_info[0].tac_r)  # doctest: +NUMBER
+    >>> mi = sdt.measure_info[0]
+    >>> float(mi.tac_r)  # doctest: +NUMBER
     5.0e-08
     >>> len(sdt.data)
     1
@@ -151,7 +154,15 @@ Write image and select metadata to an SDT file:
 
 .. code-block:: python
 
-    >>> sdtwrite('image_out.sdt', image, tac_r=5e-8, compress=True)
+    >>> sdtwrite(
+    ...     'image_out.sdt',
+    ...     image,
+    ...     tac_r=mi.tac_r,  # required
+    ...     tac_g=mi.tac_g,
+    ...     col_t=mi.col_t,
+    ...     pix_time=mi.pix_time,
+    ...     compress=True,
+    ... )
 
 Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
