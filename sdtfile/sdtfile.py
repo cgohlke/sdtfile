@@ -40,7 +40,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.7.30
+:Version: 2026.10.14
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -51,7 +51,8 @@ Install the sdtfile package and all dependencies from the
 
     python -m pip install -U sdtfile[all]
 
-See `Examples`_ for using the programming interface.
+See `Examples`_ and `Documentation <https://www.cgohlke.com/docs/sdtfile/>`_
+for using the programming interface.
 
 Source code and support are available on
 `GitHub <https://github.com/cgohlke/sdtfile>`_.
@@ -62,15 +63,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.14, 3.14.6, 3.15.0b4 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.1
-- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.6.26
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.16, 3.14.8, 3.15.0 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
+- `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.10.10
   (optional for LZ4 compressed data blocks)
 - `Lz4 <https://pypi.org/project/lz4/>`_ 4.4.5
   (optional alternative to imagecodecs for LZ4 compressed data blocks)
 
 Revisions
 ---------
+
+2026.10.14
+
+- Limit decompressed data block size to block_length.
+- Log warnings and recover data for unexpected block sizes.
+- Raise ValueError for invalid meas_mode in sdtwrite.
 
 2026.7.30
 
@@ -112,15 +119,6 @@ Revisions
 
 2026.1.14
 
-- Improve code quality.
-
-2025.12.12
-
-- Add new SPC modules and MEASURE_INFO_EXT fields.
-- Drop support for Python 3.10.
-
-2025.5.10
-
 - …
 
 Refer to the CHANGES file for older revisions.
@@ -152,6 +150,10 @@ References
 Examples
 --------
 
+Import functions and classes used in these examples:
+
+>>> from sdtfile import SdtFile, sdtwrite
+
 Read image and metadata from an "SPC Setup & Data File":
 
 >>> sdt = SdtFile('image.sdt')
@@ -159,9 +161,8 @@ Read image and metadata from an "SPC Setup & Data File":
 588
 >>> sdt.info.id[1:-1]
 'SPC Setup & Data File'
->>> int(sdt.measure_info[0].scan_x)
-128
->>> float(sdt.measure_info[0].tac_r)  # doctest: +NUMBER
+>>> mi = sdt.measure_info[0]
+>>> float(mi.tac_r)  # doctest: +NUMBER
 5.0e-08
 >>> len(sdt.data)
 1
@@ -174,7 +175,15 @@ Read image and metadata from an "SPC Setup & Data File":
 
 Write image and select metadata to an SDT file:
 
->>> sdtwrite('image_out.sdt', image, tac_r=5e-8, compress=True)
+>>> sdtwrite(
+...     'image_out.sdt',
+...     image,
+...     tac_r=mi.tac_r,  # required
+...     tac_g=mi.tac_g,
+...     col_t=mi.col_t,
+...     pix_time=mi.pix_time,
+...     compress=True,
+... )
 
 Read data and metadata from an "SPC Setup & Data File" with multiple data sets:
 
@@ -210,7 +219,7 @@ View the image and metadata in an SDT file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.7.30'
+__version__ = '2026.10.14'
 
 __all__ = [
     'BlockNo',
@@ -806,15 +815,28 @@ class SdtFile(BinaryFile):
             mi = self.measure_info[bh.meas_desc_block_no]
             bt = BlockType(bh.block_type)
             dtype = bt.dtype
-            dsize = int(bh.block_length) // dtype.itemsize
+            block_length = int(bh.block_length)
+            dsize, remainder = divmod(block_length, dtype.itemsize)
+            if remainder:
+                logger().warning(
+                    f'{block_length=} is not a multiple of '
+                    f'item size {dtype.itemsize}; '
+                    f'ignoring {remainder} trailing bytes'
+                )
             if bt.compress:
                 compressed = self._read_at(
                     data_offset, next_offset - data_offset
                 )
                 if bt.lz4:
-                    databytes = lz4frame_decode(compressed, bh.block_length)
+                    databytes = lz4frame_decode(compressed, block_length)
                 else:
-                    databytes = zipfile_decode(compressed)
+                    databytes = zipfile_decode(compressed, block_length)
+                if len(databytes) < block_length:
+                    logger().warning(
+                        f'decompressed size {len(databytes)} '
+                        f'< {block_length=}; padding with zeros'
+                    )
+                    databytes = bytes(databytes).ljust(block_length, b'\x00')
                 data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
                 data = self._read_array(
@@ -1168,7 +1190,7 @@ class SetupBlock:
             self.ascii = value.decode('windows-1250')
 
         if len(self.binary) >= 20:
-            self._binary_size = struct.unpack('<I', self.binary[16:20])[0]
+            self._binary_size = struct.unpack_from('<I', self.binary, 16)[0]
             self._binary_offset = 20
 
             dtype1 = numpy.dtype(SETUP_BIN_HDR)
@@ -2053,6 +2075,9 @@ def sdtwrite(
     # *IDENTIFICATION file info block
     if meas_mode is None:
         meas_mode = 'scan'
+    if meas_mode not in {'scan', 'image'}:
+        msg = f'{meas_mode=!r} not in {{"scan", "image"}}'
+        raise ValueError(msg)
     if meas_mode == 'scan':
         info_id = '\x04SPC Setup & Data File\x04'
         info_ver = f'1  {soft_rev} M 2.00'
@@ -2300,19 +2325,30 @@ def record_str(name: str, record: numpy.recarray[Any, Any] | None) -> str:
     return indent(f'{name}:', *lines)
 
 
-def zipfile_decode(data: bytes | memoryview, /) -> bytes:
-    """Return decompressed file from ZIP archive."""
+def zipfile_decode(data: bytes | memoryview, size: int, /) -> bytes:
+    """Return at most size bytes of decompressed file from ZIP archive."""
     # TODO: replace this with simple ZIP parsing and direct zlib.decompress?
+
+    def read(zf: zipfile.ZipFile) -> bytes:
+        info = zf.filelist[0]
+        if info.file_size > size:
+            # some files, e.g. Bruker PLIM, store larger ZIP members
+            logger().warning(
+                f'ZIP member size {info.file_size} > block_length {size}'
+            )
+        with zf.open(info) as fh:
+            return fh.read(size)
+
     try:
         # MemoryReader avoids extra copy of data
         with zipfile.ZipFile(MemoryReader(data)) as zf:
-            return zf.read(zf.filelist[0].filename)
+            return read(zf)
     except zipfile.BadZipFile:
         # the EOCD record may be missing one trailing byte
         # https://github.com/cgohlke/sdtfile/issues/8
         bio = io.BytesIO(bytes(data) + b'\x00')
         with zipfile.ZipFile(bio) as zf:
-            return zf.read(zf.filelist[0].filename)
+            return read(zf)
 
 
 def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
@@ -2320,6 +2356,7 @@ def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
     imagecodecs: ModuleType | None = None
     with contextlib.suppress(ImportError):
         import imagecodecs
+
     if imagecodecs is not None and imagecodecs.LZ4F.available:
         return imagecodecs.lz4f_decode(data, out=int(size))  # type: ignore[no-any-return]
 
@@ -2332,7 +2369,8 @@ def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
         )
         raise ImportError(msg) from None
 
-    return lz4.frame.decompress(data)  # type: ignore[no-any-return]
+    decompressor = lz4.frame.LZ4FrameDecompressor()
+    return decompressor.decompress(data, max_length=int(size))  # type: ignore[no-any-return]
 
 
 def indent(*args: Any) -> str:
