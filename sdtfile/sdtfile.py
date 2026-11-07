@@ -40,7 +40,7 @@ equipment for photon counting.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.10.14
+:Version: 2026.11.6
 :DOI: `10.5281/zenodo.10125608 <https://doi.org/10.5281/zenodo.10125608>`_
 
 Quickstart
@@ -63,7 +63,7 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.16, 3.14.8, 3.15.0 64-bit
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.17, 3.14.10, 3.15.2 64-bit
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
 - `Imagecodecs <https://pypi.org/project/imagecodecs/>`_ 2026.10.10
   (optional for LZ4 compressed data blocks)
@@ -72,6 +72,16 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.11.6
+
+- Fix reading files with more than 32767 data blocks.
+- Fix BlockNo.module bit mask and repr (breaking).
+- Pad truncated uncompressed data blocks with zeros.
+- Return writable arrays for compressed data blocks.
+- Read compressed data block to end of file if next_block_offs is invalid.
+- Raise ValueError for invalid meas_desc_block_no, info, and setup blocks.
+- Sanitize contents and validate adc_re in sdtwrite.
 
 2026.10.14
 
@@ -219,7 +229,7 @@ View the image and metadata in an SDT file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.10.14'
+__version__ = '2026.11.6'
 
 __all__ = [
     'BlockNo',
@@ -236,7 +246,6 @@ import contextlib
 import datetime
 import io
 import logging
-import math
 import mmap
 import os
 import struct
@@ -262,23 +271,33 @@ if TYPE_CHECKING:
 class BinaryFile:
     """Binary file.
 
+    :Version: 2026.11.1
+
     Parameters:
         file:
-            File name or seekable binary stream.
+            File name, seekable binary stream, fsspec OpenFile, or mmap.
         mode:
             File open mode if ``file`` is a file name.
             If not specified, defaults to ``'r'``. Files are always opened
             in binary mode.
+            Ignored for streams and other file objects.
         memmap:
             Map file into memory.
             Ignored if memory mapping is not available or if the stream does
             not support it.
+            ``mmap.mmap`` objects are always accessed directly.
 
     Notes:
         Memory mapping can improve random-access read performance on large
         files or repeated reads of the same file regions by reducing syscall
         overhead and data copying.
         For sequential one-pass reads, regular buffered I/O may be faster.
+
+        File access is not thread-safe unless the file is memory-mapped
+        or ``set_lock(True)`` was called.
+
+        This class is shared (inlined) among many modules, for example,
+        czifile, liffile, sdtfile, orifile, obffile, ptufile, and fbdfile.
 
     Raises:
         TypeError:
@@ -318,7 +337,7 @@ class BinaryFile:
         self._memmap = bool(memmap)
         self._lock = contextlib.nullcontext()
 
-        if isinstance(file, (str, os.PathLike)):
+        if isinstance(file, str | os.PathLike):
             ext = os.path.splitext(file)[-1].lower()
             if self._ext and ext not in self._ext:
                 msg = f'invalid file extension: {ext!r} not in {self._ext!r}'
@@ -345,57 +364,84 @@ class BinaryFile:
                 raise TypeError(msg)
 
             self._fh = file
-            try:
-                self._fh.tell()
-            except Exception as exc:
+            if not self._is_seekable(self._fh):
                 msg = f'{file=!r} is not seekable'
-                raise ValueError(msg) from exc
-            if hasattr(file, 'path'):
-                self._path = os.path.abspath(file.path)
-            elif hasattr(file, 'name'):
-                self._path = os.path.abspath(file.name)
+                raise ValueError(msg)
+            self._path = self._file_path(file)
 
         elif hasattr(file, 'open'):
             # fsspec OpenFile
             self._fh = file.open()
             self._close = True
-            try:
-                self._fh.tell()
-            except Exception as exc:
+            fh: object = self._fh
+            if isinstance(fh, io.TextIOBase):
+                with contextlib.suppress(Exception):
+                    fh.close()
+                msg = f'{file=!r} is not open in binary mode'
+                raise TypeError(msg)
+            if not self._is_seekable(self._fh):
                 with contextlib.suppress(Exception):
                     self._fh.close()
                 msg = f'{file=!r} is not seekable'
-                raise ValueError(msg) from exc
-            if hasattr(file, 'path'):
-                self._path = os.path.abspath(file.path)
+                raise ValueError(msg)
+            self._path = self._file_path(file)
 
         else:
             msg = f'cannot handle {type(file)=}'
             raise TypeError(msg)
 
-        if hasattr(file, 'name') and file.name:
-            self._name = os.path.basename(file.name)
+        name = getattr(file, 'name', None)
+        if isinstance(name, str | os.PathLike) and os.fspath(name):
+            self._name = os.path.basename(name)
         elif self._path:
             self._name = os.path.basename(self._path)
         else:
             self._name = type(file).__name__
 
-        if memmap:
-            _fh: Any = self._fh
-            if isinstance(_fh, mmap.mmap):
-                self._mm = _fh
+        _fh: Any = self._fh
+        if isinstance(_fh, mmap.mmap):
+            # mmap objects lack readinto and writable
+            self._mm = _fh
+            self._mv = memoryview(self._mm)
+        elif memmap:
+            try:
+                access = (
+                    mmap.ACCESS_WRITE
+                    if self._fh.writable()
+                    else mmap.ACCESS_READ
+                )
+                self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
                 self._mv = memoryview(self._mm)
-            else:
-                try:
-                    access = (
-                        mmap.ACCESS_WRITE
-                        if self._fh.writable()
-                        else mmap.ACCESS_READ
-                    )
-                    self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
-                    self._mv = memoryview(self._mm)
-                except OSError:
-                    pass
+            except (OSError, ValueError, AttributeError):
+                # empty file or stream without file descriptor
+                pass
+
+    @staticmethod
+    def _is_seekable(fh: Any, /) -> bool:
+        """Return whether file handle supports random access."""
+        try:
+            fh.tell()
+            # e.g. fsspec HTTPStreamFile for servers without range requests
+            seekable = getattr(fh, 'seekable', None)
+            return seekable is None or bool(seekable())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _file_path(file: Any, /) -> str:
+        """Return path of file object, absolute if on local file system."""
+        path = getattr(file, 'path', None)
+        if isinstance(path, str) and path:
+            protocol = getattr(getattr(file, 'fs', None), 'protocol', 'file')
+            if isinstance(protocol, str):
+                protocol = (protocol,)
+            if 'file' in protocol or 'local' in protocol:
+                return os.path.abspath(path)
+            return path
+        name = getattr(file, 'name', None)
+        if isinstance(name, str | os.PathLike) and os.fspath(name):
+            return os.path.abspath(name)
+        return ''
 
     @property
     def filehandle(self) -> IO[bytes]:
@@ -443,6 +489,7 @@ class BinaryFile:
             enabled:
                 If true, use a threading.RLock, else a no-op lock.
                 Has no effect when memory-mapped I/O is active.
+                Do not call while other threads access the file.
 
         """
         if self._mm is not None:
@@ -459,13 +506,23 @@ class BinaryFile:
             data: Data to write.
 
         """
-        if self._mm is not None and self.writable:
-            # writable mmap: direct slice write, no cursor movement
-            self._mm[offset : offset + len(data)] = data
+        mv = self._mv
+        if mv is not None and not mv.readonly:
+            # slicing would silently write at negative or clipped offsets
+            end = offset + len(data)
+            if offset < 0 or end > len(mv):
+                msg = (
+                    f'cannot write {len(data)} bytes at {offset=} past end '
+                    f'of memory-mapped file of size {len(mv)}'
+                )
+                raise ValueError(msg)
+            mv[offset:end] = data
         else:
+            # regular streams reject negative offsets
             with self._lock:
                 self._fh.seek(offset)
                 self._fh.write(data)
+            self.__dict__.pop('filesize', None)
 
     def _read_at(self, offset: int, size: int, /) -> bytes | memoryview:
         """Read bytes from file at given offset.
@@ -476,12 +533,21 @@ class BinaryFile:
 
         Parameters:
             offset: Byte offset from start of file.
-            size: Number of bytes to read.
+            size: Number of bytes to read. If ``-1``, read to end of file.
 
         """
+        # hot path for small reads; regular streams reject bad arguments
         mv = self._mv
         if mv is not None:
+            if offset < 0 or size < 0:
+                # slicing would silently misread; size=-1 reads to end
+                if offset < 0 or size < -1:
+                    msg = f'{offset=} < 0 or {size=} < -1'
+                    raise ValueError(msg)
+                return mv[offset:]
             return mv[offset : offset + size]
+        # do not allocate more than available for corrupted sizes
+        # size = min(size, max(0, self.filesize - offset))
         fh = self._fh
         with self._lock:
             fh.seek(offset)
@@ -498,9 +564,16 @@ class BinaryFile:
             Number of bytes read.
 
         """
+        # hot path for bulk reads shared by many modules: keep it minimal.
+        # Buffered streams fill the buffer in one readinto call until EOF;
+        # do not add short-read loops or typed-buffer handling here.
         nbytes = len(buffer)
         mv = self._mv
         if mv is not None:
+            if offset < 0:
+                # slicing would silently index from the end of the map
+                msg = f'{offset=} < 0'
+                raise ValueError(msg)
             n = min(nbytes, max(0, len(mv) - offset))
             buffer[:n] = numpy.frombuffer(mv[offset : offset + n], numpy.uint8)
             return n
@@ -510,9 +583,10 @@ class BinaryFile:
             fh.seek(offset)
             try:
                 return fh.readinto(buffer)  # type: ignore[attr-defined, no-any-return]
-            except (AttributeError, OSError):
+            except (AttributeError, io.UnsupportedOperation):
+                # stream without readinto; do not swallow real I/O errors
                 data = fh.read(nbytes)
-                buffer[:] = numpy.frombuffer(data, numpy.uint8)
+                buffer[: len(data)] = numpy.frombuffer(data, numpy.uint8)
                 return len(data)
 
     def _read_array(
@@ -544,6 +618,7 @@ class BinaryFile:
             writable:
                 By default, return read-only array from memory-mapped file.
                 Prevents accidental modification of underlying writable file.
+                Arrays from read-only memory maps are always read-only.
                 Has no effect for non-memory-mapped files (always writable).
             truncate:
                 Allow partial reads of array.
@@ -552,36 +627,43 @@ class BinaryFile:
         """
         dtype = numpy.dtype(dtype)
         itemsize = dtype.itemsize
-        if offset < 0:
-            msg = f'{offset=} < 0'
-            raise ValueError(msg)
-        if count < -1:
-            msg = f'{count=} < -1'
-            raise ValueError(msg)
 
         mv = self._mv
         if mv is not None:
+            if offset < 0 or count < -1:
+                # slicing would silently misread, regular streams raise
+                msg = f'{offset=} < 0 or {count=} < -1'
+                raise ValueError(msg)
             if count == -1:
                 count = max(0, (len(mv) - offset) // itemsize)
             nbytes = count * itemsize
             size = min(nbytes, max(0, len(mv) - offset))
             n = size - size % itemsize
-            array = numpy.frombuffer(
-                mv[offset : offset + n],
-                dtype,
-            )
             if copy:
-                array = array.copy()
-            elif not writable and array.flags.writeable:
-                array.flags.writeable = False
+                # ndarray.copy is slow for structured dtypes
+                array = numpy.frombuffer(
+                    bytearray(mv[offset : offset + n]), dtype
+                )
+            else:
+                array = numpy.frombuffer(mv[offset : offset + n], dtype)
+                if not writable and array.flags.writeable:
+                    array.flags.writeable = False
         elif count > -1:
+            # read directly, routing through _read_into adds per-call overhead
             fh = self._fh
             nbytes = count * itemsize
+            # do not allocate more than available for corrupted sizes
+            # available = max(0, (self.filesize - offset) // itemsize)
+            # array = numpy.empty(min(count, available), dtype)
             array = numpy.empty(count, dtype)
             with self._lock:
                 fh.seek(offset)
-                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+                # array.data builds slow temporary format for structured dtypes
+                n = fh.readinto(array)  # type: ignore[attr-defined]
         else:
+            if count < -1:
+                msg = f'{count=} < -1'
+                raise ValueError(msg)
             fh = self._fh
             with self._lock:
                 fh.seek(0, os.SEEK_END)
@@ -590,7 +672,7 @@ class BinaryFile:
                 nbytes = count * itemsize
                 array = numpy.empty(count, dtype)
                 fh.seek(offset)
-                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+                n = fh.readinto(array)  # type: ignore[attr-defined]
 
         if n != nbytes:
             array = array[: n // itemsize]
@@ -608,10 +690,12 @@ class BinaryFile:
         if self._mm is not None:
             return len(self._mm)
         fh = self._fh
-        try:
-            return os.fstat(fh.fileno()).st_size
-        except (AttributeError, io.UnsupportedOperation, OSError):
-            pass
+        if not fh.writable():
+            # fstat does not see unflushed writes
+            try:
+                return os.fstat(fh.fileno()).st_size
+            except (AttributeError, io.UnsupportedOperation, OSError):
+                pass
         with self._lock:
             pos = fh.tell()
             fh.seek(0, os.SEEK_END)
@@ -622,6 +706,8 @@ class BinaryFile:
     @property
     def writable(self) -> bool:
         """File is open for writing."""
+        if self._mv is not None:
+            return not self._mv.readonly
         return self._fh.writable()
 
     @property
@@ -716,7 +802,8 @@ class SdtFile(BinaryFile):
 
     def _init(self) -> None:
         # read file header
-        self.header = numpy.rec.array(self._read_array(0, 1, FILE_HEADER))[0]
+        record_t = numpy.dtype((numpy.record, FILE_HEADER))
+        self.header = self._read_array(0, 1, record_t, copy=True)[0]
         if (
             self.header.chksum not in {0x55AA, 0xAA55}
             and self.header.header_valid != 0x5555
@@ -727,10 +814,11 @@ class SdtFile(BinaryFile):
                 f'header_valid=0x{self.header.header_valid:x}!=0x5555)'
             )
             raise ValueError(msg)
-        if self.header.no_of_data_blocks == 0x7FFF:
-            self.header.no_of_data_blocks = self.header.reserved1
-        elif self.header.no_of_data_blocks > 0x7FFF:
-            msg = f'{self.header.no_of_data_blocks=} > {0x7FFF}'
+        no_of_data_blocks = int(self.header.no_of_data_blocks)
+        if no_of_data_blocks == 0x7FFF:
+            no_of_data_blocks = int(self.header.reserved1)
+        elif no_of_data_blocks < 0:
+            msg = f'{no_of_data_blocks=} < 0'
             raise ValueError(msg)
 
         # read file info
@@ -741,10 +829,10 @@ class SdtFile(BinaryFile):
         self.info = FileInfo(info)
         try:
             if self.info.id not in {
-                'SPC Setup & Data File',
-                'SPC FCS Data File',
-                'SPC DLL Data File',
-                'SPC Setup Script File',
+                '\x04SPC Setup & Data File\x04',
+                '\x04SPC FCS Data File\x04',
+                '\x04SPC DLL Data File\x04',
+                '\x04SPC Setup Script File\x04',
                 'SPC Setup & Data File',  # fallback for corrupted file IDs
             }:
                 msg = f'{self.info.id!r} not supported'
@@ -775,31 +863,31 @@ class SdtFile(BinaryFile):
             dtype = record_dtype(
                 MEASURE_INFO, int(self.header.meas_desc_block_length)
             )
+            record_t = numpy.dtype((numpy.record, dtype))
             base_offs = int(self.header.meas_desc_block_offs)
             block_len = int(self.header.meas_desc_block_length)
             for i in range(self.header.no_of_meas_desc_blocks):
                 self.measure_info.append(
-                    numpy.rec.array(
-                        self._read_array(base_offs + i * block_len, 1, dtype)
+                    self._read_array(
+                        base_offs + i * block_len, 1, record_t, copy=True
                     )[0]
                 )
 
         rev = FileRevision(self.header.revision)
-        if rev.revision >= 15:
-            block_header_t = BLOCK_HEADER
-        else:
-            block_header_t = BLOCK_HEADER_OLD
+        # build record dtype once. numpy.dtype(list) is slow in the loop
+        dtype = numpy.dtype(
+            BLOCK_HEADER if rev.revision >= 15 else BLOCK_HEADER_OLD
+        )
+        block_header_t = numpy.dtype((numpy.record, dtype))
 
         self.times = []
         self.data = []
         self.block_headers = []
 
         offset = self.header.data_block_offs
-        for _ in range(self.header.no_of_data_blocks):
+        for _ in range(no_of_data_blocks):
             # read data block header
-            bh = numpy.rec.array(self._read_array(offset, 1, block_header_t))[
-                0
-            ]
+            bh = self._read_array(offset, 1, block_header_t, copy=True)[0]
             self.block_headers.append(bh)
             # revision >= 15 extends data_offs and next_block_offs with a
             # 1-byte high field, giving 40-bit addressing for blocks > 4 GB
@@ -812,7 +900,14 @@ class SdtFile(BinaryFile):
                 data_offset = int(bh.data_offs)
                 next_offset = int(bh.next_block_offs)
             # read data block
-            mi = self.measure_info[bh.meas_desc_block_no]
+            meas_desc_block_no = int(bh.meas_desc_block_no)
+            if not 0 <= meas_desc_block_no < len(self.measure_info):
+                msg = (
+                    f'{meas_desc_block_no=} out of range '
+                    f'[0, {len(self.measure_info)})'
+                )
+                raise ValueError(msg)
+            mi = self.measure_info[meas_desc_block_no]
             bt = BlockType(bh.block_type)
             dtype = bt.dtype
             block_length = int(bh.block_length)
@@ -823,25 +918,30 @@ class SdtFile(BinaryFile):
                     f'item size {dtype.itemsize}; '
                     f'ignoring {remainder} trailing bytes'
                 )
+            data = numpy.zeros(dsize, dtype=dtype)
             if bt.compress:
-                compressed = self._read_at(
-                    data_offset, next_offset - data_offset
-                )
+                compressed_size = next_offset - data_offset
+                if compressed_size <= 0:
+                    # next_block_offs not set: assume block extends to EOF
+                    compressed_size = self.filesize - data_offset
+                compressed = self._read_at(data_offset, compressed_size)
                 if bt.lz4:
-                    databytes = lz4frame_decode(compressed, block_length)
+                    n = lz4frame_decode(compressed, data)
                 else:
-                    databytes = zipfile_decode(compressed, block_length)
-                if len(databytes) < block_length:
+                    n = zipfile_decode(compressed, data)
+                if n < data.nbytes:
                     logger().warning(
-                        f'decompressed size {len(databytes)} '
-                        f'< {block_length=}; padding with zeros'
+                        f'decompressed size {n} < {data.nbytes}; '
+                        'padding with zeros'
                     )
-                    databytes = bytes(databytes).ljust(block_length, b'\x00')
-                data = numpy.frombuffer(databytes, dtype=dtype, count=dsize)
             else:
-                data = self._read_array(
-                    data_offset, count=dsize, dtype=dtype, copy=True
-                )
+                # _read_into expects a flat uint8 buffer
+                n = self._read_into(data_offset, data.view(numpy.uint8))
+                if n < data.nbytes:
+                    logger().warning(
+                        f'data block size {n} < {data.nbytes}; '
+                        'padding with zeros'
+                    )
 
             # TODO: support more block types
             # the following works with DECAY, IMG, MCS, PAGE
@@ -895,7 +995,11 @@ class SdtFile(BinaryFile):
                 fcs_points = -1
 
             # TODO: review how data are shaped for different block types
-            if bt.contents == 'FCS_BLOCK' and fcs_points > 0:
+            if (
+                bt.contents == 'FCS_BLOCK'
+                and fcs_points > 0
+                and dsize % fcs_points == 0
+            ):
                 if dsize != fcs_points:
                     data = data.reshape((-1, fcs_points))
             elif dsize == scan_x * scan_y * adc_re:
@@ -1034,8 +1138,7 @@ class SdtFile(BinaryFile):
         ]
 
     def __repr__(self) -> str:
-        filename = os.path.split(self.filename)[-1]
-        return f'{self.__class__.__name__}({filename!r})'
+        return f'{self.__class__.__name__}({self.name!r})'
 
     def __str__(self) -> str:
         return indent(
@@ -1043,7 +1146,7 @@ class SdtFile(BinaryFile):
             # os.path.normpath(os.path.normcase(self.filename)),
             FileRevision(self.header.revision),
             record_str('header', self.header),
-            indent('info:', self.info.strip()),
+            indent('info:', str.strip(self.info)),
             *(
                 record_str(f'measure_info[{i}]', rec)
                 for i, rec in enumerate(self.measure_info)
@@ -1133,8 +1236,11 @@ class FileInfo(str):  # noqa: SLOT000
 
     def __init__(self, value: str, /) -> None:
         str.__init__(self)
-        assert value.startswith('*IDENTIFICATION')
-        assert value.strip().endswith('*END')
+        if not value.startswith('*IDENTIFICATION') or not (
+            value.strip().endswith('*END')
+        ):
+            msg = 'invalid SDT file info block'
+            raise ValueError(msg)
 
         for line in value.splitlines()[1:-1]:
             try:
@@ -1142,7 +1248,9 @@ class FileInfo(str):  # noqa: SLOT000
             except ValueError:
                 pass
             else:
-                setattr(self, key.strip().lower(), val.strip())
+                key = key.strip().lower()
+                if not key.startswith('_'):
+                    setattr(self, key, val.strip())
 
 
 class SetupBlock:
@@ -1172,8 +1280,11 @@ class SetupBlock:
     """Size of structures in binary."""
 
     def __init__(self, value: bytes, /) -> None:
-        assert value.startswith(b'*SETUP')
-        assert value.strip().endswith(b'*END')
+        if not value.startswith(b'*SETUP') or not (
+            value.strip().endswith(b'*END')
+        ):
+            msg = 'invalid SDT setup block'
+            raise ValueError(msg)
 
         self.ascii = ''
         self.binary = b''
@@ -1333,11 +1444,14 @@ class BlockNo:
     """Module number (bits 24-25)."""
 
     def __init__(self, value: int, /) -> None:
-        self.module = (value >> 24) & 0xFF
+        self.module = (value >> 24) & 0x3
         self.block = value & 0xFF
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}({self.module} << 24 & {self.block})'
+        return (
+            f'{self.__class__.__name__}'
+            f'(module={self.module}, block={self.block})'
+        )
 
 
 class BlockType:
@@ -1925,11 +2039,11 @@ MODULE_CODES: dict[int, str] = {
 HEADER_VALID: dict[int, bool] = {0x1111: False, 0x5555: True}
 
 INFO_IDS: dict[str, str] = {
-    'SPC Setup Script File': 'Setup script mode: setup only',
-    'SPC Setup & Data File': 'Normal mode: setup + data',
-    'SPC DLL Data File': 'DLL created: no setup, only data',
-    'SPC Flow Data File': 'Continuous Flow mode: no setup, only data',
-    'SPC FCS Data File': (
+    '\x04SPC Setup Script File\x04': 'Setup script mode: setup only',
+    '\x04SPC Setup & Data File\x04': 'Normal mode: setup + data',
+    '\x04SPC DLL Data File\x04': 'DLL created: no setup, only data',
+    '\x04SPC Flow Data File\x04': 'Continuous Flow mode: no setup, only data',
+    '\x04SPC FCS Data File\x04': (
         'FIFO mode: setup, data blocks = Decay, FCS, FIDA, FILDA & MCS '
         'curves for each used routing channel'
     ),
@@ -2028,8 +2142,8 @@ def sdtwrite(
 
     scan_y, scan_x, adc_re = data.shape
 
-    if adc_re > 32767 and adc_re != 65536:
-        msg = f'{adc_re=} must be <= 32767 or exactly 65536'
+    if adc_re < 1 or (adc_re > 32767 and adc_re != 65536):
+        msg = f'{adc_re=} must be in range [1, 32767] or exactly 65536'
         raise ValueError(msg)
 
     orig_x = scan_x
@@ -2065,6 +2179,10 @@ def sdtwrite(
         title = (title.splitlines() or [''])[0].strip()
     title = title or 'Created by sdtfile.py'
 
+    if contents is not None:
+        contents = (contents.splitlines() or [''])[0].strip()
+    contents = contents or 'Unknown'
+
     if timestamp is None:
         timestamp = datetime.datetime.now(tz=datetime.UTC)
     date_str = timestamp.strftime('%Y-%m-%d')
@@ -2090,12 +2208,12 @@ def sdtwrite(
             f'  ID        : {info_id}',
             f'  Title     : {title}',
             f'  Version   : {info_ver}',
-            f'  Revision  : {math.log2(adc_re):.0f} bits ADC',
+            f'  Revision  : {(adc_re - 1).bit_length()} bits ADC',
             f'  Date      : {date_str}',
             f'  Time      : {time_str}',
             '  Author    : Unknown',
             '  Company   : Unknown',
-            f'  Contents  : {contents or "Unknown"}',
+            f'  Contents  : {contents}',
             '*END',
             '',
             '',
@@ -2260,7 +2378,7 @@ def sdtwrite(
 
     close = False
     fout: IO[bytes]
-    if isinstance(file, (str, os.PathLike)):
+    if isinstance(file, str | os.PathLike):
         fout = open(file, mode)  # noqa: SIM115
         close = True
     else:
@@ -2281,7 +2399,9 @@ def record_dtype(
     record: Record | Record1 | Record2, size: int, /
 ) -> numpy.dtype[Any]:
     """Return numpy dtype for record not exceeding size bytes."""
-    assert size > 0
+    if size <= 0:
+        msg = f'{size=} <= 0'
+        raise ValueError(msg)
     fields = len(record)
     dtype = numpy.dtype(record)
     while dtype.itemsize > size and fields > 0:
@@ -2325,19 +2445,25 @@ def record_str(name: str, record: numpy.recarray[Any, Any] | None) -> str:
     return indent(f'{name}:', *lines)
 
 
-def zipfile_decode(data: bytes | memoryview, size: int, /) -> bytes:
-    """Return at most size bytes of decompressed file from ZIP archive."""
-    # TODO: replace this with simple ZIP parsing and direct zlib.decompress?
+def zipfile_decode(data: bytes | memoryview, out: NDArray[Any], /) -> int:
+    """Decompress first file in ZIP archive into C-contiguous array.
 
-    def read(zf: zipfile.ZipFile) -> bytes:
+    Return number of bytes written to `out`.
+
+    """
+    # TODO: replace this with simple ZIP parsing and direct zlib.decompress?
+    buffer = out.reshape(-1).view(numpy.uint8)
+
+    def read(zf: zipfile.ZipFile) -> int:
         info = zf.filelist[0]
-        if info.file_size > size:
+        if info.file_size > len(buffer):
             # some files, e.g. Bruker PLIM, store larger ZIP members
             logger().warning(
-                f'ZIP member size {info.file_size} > block_length {size}'
+                f'ZIP member size {info.file_size} > {len(buffer)}'
             )
         with zf.open(info) as fh:
-            return fh.read(size)
+            assert isinstance(fh, zipfile.ZipExtFile)
+            return fh.readinto(buffer)
 
     try:
         # MemoryReader avoids extra copy of data
@@ -2351,14 +2477,20 @@ def zipfile_decode(data: bytes | memoryview, size: int, /) -> bytes:
             return read(zf)
 
 
-def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
-    """Return decoded LZ4 frame."""
+def lz4frame_decode(data: bytes | memoryview, out: NDArray[Any], /) -> int:
+    """Decode LZ4 frame into C-contiguous array.
+
+    Return number of bytes written to `out`.
+
+    """
     imagecodecs: ModuleType | None = None
     with contextlib.suppress(ImportError):
         import imagecodecs
 
     if imagecodecs is not None and imagecodecs.LZ4F.available:
-        return imagecodecs.lz4f_decode(data, out=int(size))  # type: ignore[no-any-return]
+        # TODO: imagecodecs > 2026.10.10 can decode directly into out
+        buffer = out.reshape(-1).view(numpy.uint8)
+        return len(imagecodecs.lz4f_decode(data, out=buffer))
 
     try:
         import lz4.frame
@@ -2370,7 +2502,10 @@ def lz4frame_decode(data: bytes | memoryview, size: int, /) -> bytes:
         raise ImportError(msg) from None
 
     decompressor = lz4.frame.LZ4FrameDecompressor()
-    return decompressor.decompress(data, max_length=int(size))  # type: ignore[no-any-return]
+    buffer = out.reshape(-1).view(numpy.uint8)
+    decoded = decompressor.decompress(data, max_length=len(buffer))
+    buffer[: len(decoded)] = numpy.frombuffer(decoded, numpy.uint8)
+    return len(decoded)
 
 
 def indent(*args: Any) -> str:
@@ -2449,10 +2584,9 @@ def main(argv: list[str] | None = None) -> int:
     import time
     from glob import glob
 
-    from matplotlib import pyplot
-
     imshow: Any
     try:
+        from matplotlib import pyplot
         from tifffile import imshow
     except ImportError:
         imshow = None
@@ -2462,16 +2596,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if len(argv) == 1:
         path = askopenfilename(
-            title='Select an Imspector image file',
+            title='Select an SDT file',
             filetypes=[('SDT files', '*.sdt'), ('All files', '*')],
         )
         files = [path] if path else []
-    elif '*' in argv[1]:
-        files = glob(argv[1])
-    elif os.path.isdir(argv[1]):
-        files = glob(f'{argv[1]}/**/*.sdt', recursive=True)
     else:
-        files = argv[1:]
+        files = []
+        for arg in argv[1:]:
+            if '*' in arg or '?' in arg:
+                files.extend(glob(arg))
+            elif os.path.isdir(arg):
+                files.extend(glob(f'{arg}/**/*.sdt', recursive=True))
+            else:
+                files.append(arg)
 
     for fname in files:
         try:
