@@ -1,5 +1,18 @@
+..
+  This file is updated by setup.py. Do not edit.
+
 Revisions
----------
+=========
+
+2026.11.6
+
+- Fix reading files with more than 32767 data blocks.
+- Fix BlockNo.module bit mask and repr (breaking).
+- Pad truncated uncompressed data blocks with zeros.
+- Return writable arrays for compressed data blocks.
+- Read compressed data block to end of file if next_block_offs is invalid.
+- Raise ValueError for invalid meas_desc_block_no, info, and setup blocks.
+- Sanitize contents and validate adc_re in sdtwrite.
 
 2026.10.14
 
