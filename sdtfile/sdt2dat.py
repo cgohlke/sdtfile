@@ -49,23 +49,32 @@ in `reference.sdt` with lifetime 4.0 ns, after subtracting a background of
 The decay curves are saved to `file.sdt.dat`. Phasor coordinates are saved
 to `sdtphasor.tsv`.
 
-This script depends on Python >= 3.8 and the sdtfile, matplotlib, numpy, and
+This script depends on Python >= 3.12 and the sdtfile, matplotlib, numpy, and
 click libraries, which can be installed with::
 
     python -m pip install sdtfile matplotlib click
 
 """
 
+from __future__ import annotations
+
 import math
 import os
-import sys
+from typing import TYPE_CHECKING
 
 import numpy
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from typing import Any
+
+    from numpy.typing import NDArray
+
 
 # TODO: reimplement this with PhasorPy <https://www.phasorpy.org>
 
 
-def sdtread(filename):
+def sdtread(filename: str) -> tuple[NDArray[Any], NDArray[Any]]:
     """Return decay curve and time axis from Becker & Hickl SDT file."""
     from sdtfile import BlockType, SdtFile
 
@@ -78,7 +87,7 @@ def sdtread(filename):
         raise TypeError(msg)
 
 
-def tsvwrite(filename, labels, *args):
+def tsvwrite(filename: str, labels: Sequence[str], *args: Any) -> None:
     """Write arrays to TSV file."""
     with open(filename, 'w', encoding='utf-8') as fh:
         fh.write('\t'.join(labels))
@@ -89,8 +98,14 @@ def tsvwrite(filename, labels, *args):
 
 
 def globalsdat_write(
-    filename, decay, reference, frequency, *, start=None, stop=None
-):
+    filename: str,
+    decay: NDArray[Any],
+    reference: NDArray[Any],
+    frequency: float,
+    *,
+    start: int | None = None,
+    stop: int | None = None,
+) -> None:
     """Write decay and reference arrays to Globals DAT file."""
     decay = numpy.squeeze(decay)
     reference = numpy.squeeze(reference)
@@ -98,7 +113,7 @@ def globalsdat_write(
         msg = 'decay and reference must be 1D arrays of same length'
         raise ValueError(msg)
     start, stop = slice(start, stop).indices(len(decay))[:2]
-    step = 1e3 / (len(decay) + 1) / frequency
+    step = 1e3 / len(decay) / frequency
     with open(filename, 'w', encoding='ascii') as fh:
         fh.write(f'{step:8.5f}    {start}     {stop}\n')
         fh.writelines(
@@ -112,20 +127,24 @@ def globalsdat_write(
 
 
 def phasor_from_lifetimes(
-    lifetimes, frequency, fractions=None, *, isamplitude=True
-):
+    lifetimes: float | Sequence[float],
+    frequency: float,
+    fractions: Sequence[float] | None = None,
+    *,
+    isamplitude: bool = True,
+) -> tuple[Any, Any]:
     """Return phasor coordinates (g, s) from lifetime distribution."""
     omgtau = numpy.array(frequency, dtype=numpy.float64, copy=True)
     try:
-        lifetimes[1]
+        lifetimes[1]  # type: ignore[index]
     except (TypeError, IndexError):
         # single component
-        omgtau *= lifetimes * 2e-3 * math.pi
+        omgtau *= numpy.squeeze(lifetimes) * 2e-3 * math.pi
         g = 1.0 / (1.0 + omgtau * omgtau)
         s = omgtau * g
         return g, s
     # multiple components
-    tau = numpy.array(lifetimes, dtype=numpy.float64, copy=False)
+    tau = numpy.asarray(lifetimes, dtype=numpy.float64)
     if fractions is None:
         fractions = [1.0 / tau.shape[0]] * tau.shape[0]
     frac = numpy.array(fractions, dtype=numpy.float64, copy=True)
@@ -147,8 +166,12 @@ def phasor_from_lifetimes(
 
 
 def phasor_from_signal(
-    signal, zero=None, background=None, start=None, stop=None
-):
+    signal: NDArray[Any],
+    *,
+    background: float | None = None,
+    start: int | None = None,
+    stop: int | None = None,
+) -> tuple[Any, Any]:
     """Return phasor coordinates (g, s) from evenly sampled signal."""
     f = numpy.array(signal, dtype=numpy.float64, copy=True)
     if background is not None:
@@ -161,20 +184,17 @@ def phasor_from_signal(
         msg = 'minimum of 3 samples required'
         raise ValueError(msg)
     f = f.reshape((f.shape[0], -1))
-    t = numpy.arange(f.shape[0], dtype=numpy.float64).reshape(-1, 1)
+    t = numpy.arange(start, stop, dtype=numpy.float64).reshape(-1, 1)
     t *= 2.0 * math.pi / samples
     g = numpy.mean(f * numpy.cos(t), axis=0).reshape(shape)
     s = numpy.mean(f * numpy.sin(t), axis=0).reshape(shape)
     fdc = numpy.mean(f, axis=0).reshape(shape)
     g /= fdc
     s /= fdc
-    if zero is not None:
-        g -= zero[0]
-        s -= zero[1]
     return g, s
 
 
-def universal_circle(samples=65):
+def universal_circle(samples: int = 65) -> tuple[Any, Any]:
     """Return phasor coordinates (g, s) of universal half circle."""
     t = numpy.arange(0.0, samples, 1.0, dtype=numpy.float64)
     t *= math.pi / (samples - 1)
@@ -183,32 +203,45 @@ def universal_circle(samples=65):
     return real, imag
 
 
-def phasor_plot(real, imag, frequency, highlight=0, ax=None):
+def phasor_plot(
+    real: NDArray[Any],
+    imag: NDArray[Any],
+    frequency: float,
+    highlight: int | None = 0,
+    ax: Any = None,
+) -> None:
     """Plot phasor coordinates (g, s) using matplotlib."""
     from matplotlib import pyplot
 
-    fig, ax = pyplot.subplots() if ax is None else None, ax
+    fig = None
+    if ax is None:
+        fig, ax = pyplot.subplots()
     ax.axis('equal')
     ax.set(title=f'Phasor Plot ({frequency:.2f} MHz)', xlabel='G', ylabel='S')
     ax.plot(*universal_circle(), color='k', lw=0.25)
     ax.scatter(real, imag, color='#1f77b4', alpha=0.5)
-    ax.scatter(
-        real[highlight], imag[highlight], marker='X', color='#d62728', lw=1.0
-    )
+    if highlight is not None:
+        ax.scatter(
+            real[highlight],
+            imag[highlight],
+            marker='X',
+            color='#d62728',
+            lw=1.0,
+        )
     if fig is not None:
         pyplot.show()
 
 
 def plot_signals(
-    signals,
-    times,
+    signals: NDArray[Any],
+    times: NDArray[Any],
     *,
-    background=None,
-    highlight=0,
-    start=None,
-    stop=None,
-    ax=None,
-):
+    background: float | None = None,
+    highlight: int | None = 0,
+    start: int | None = None,
+    stop: int | None = None,
+    ax: Any = None,
+) -> None:
     """Plot signals vs time using matplotlib."""
     from matplotlib import pyplot
 
@@ -216,11 +249,13 @@ def plot_signals(
     times = times * 1e9
     start, stop = slice(start, stop).indices(len(times))[:2]
 
-    fig, ax = pyplot.subplots() if ax is None else None, ax
+    fig = None
+    if ax is None:
+        fig, ax = pyplot.subplots()
     ax.set(title='Decays', xlabel='time (ns)', ylabel='counts')
     ax.axvline(times[start], color='k', lw=0.25)
     ax.axvline(times[stop - 1], color='k', lw=0.25)
-    if background is not None:
+    if background:
         ax.axhline(background, color='k', lw=0.25)
     for i, s in enumerate(signals):
         if i != highlight:
@@ -232,24 +267,23 @@ def plot_signals(
 
 
 def analyze(
-    filenames,
-    reference,
-    lifetime,
+    filenames: Sequence[str],
+    reference: str,
+    lifetime: float,
     *,
-    frequency=None,
-    background=0,
-    startstop=(None, None),
-    highlight=None,
-    convert=True,
-    plot=True,
-    axes=None,
-):
+    frequency: float | None = None,
+    background: float = 0,
+    startstop: tuple[int | None, int | None] = (None, None),
+    highlight: int | None = None,
+    convert: bool = True,
+    plot: bool = True,
+    axes: Any = None,
+) -> None:
     """Phasor analysis of SPC decay curves in Becker & Hickl SDT files."""
-    # read reference signal of known lifetime and calculate phasor corrections
+    # read reference signal of known lifetime
     signal, times = sdtread(reference)
     if frequency is None:
-        frequency = 1e-6 / (times[-1] + times[1])
-    zero = phasor_from_lifetimes(lifetime, frequency)
+        frequency = 1e-6 / (times[-1] - 2 * times[0] + times[1])
 
     # read decays from series of SDT files into one 2D array
     signals = numpy.array([sdtread(f)[0] for f in filenames])
@@ -258,18 +292,24 @@ def analyze(
     samples = len(times)
     start, stop = slice(*startstop).indices(samples)[:2]
 
-    # calculate phasors
-    zero = phasor_from_signal(
-        signal, zero=zero, background=background, start=start, stop=stop
+    # calibrate phase and modulation using reference of known lifetime
+    known = complex(*phasor_from_lifetimes(lifetime, frequency))
+    measured = complex(
+        *phasor_from_signal(
+            signal, background=background, start=start, stop=stop
+        )
     )
-    phasors = phasor_from_signal(
-        signals, zero=zero, background=background, start=start, stop=stop
+    g, s = phasor_from_signal(
+        signals, background=background, start=start, stop=stop
     )
+    calibrated = (g + 1j * s) * (known / measured)
+    phasors = calibrated.real, calibrated.imag
 
     # print results
+    reference = os.path.split(reference)[-1]
     filenames = [os.path.split(f)[-1] for f in filenames]
-    for _name, _g, _s in zip(filenames, *phasors, strict=True):
-        pass
+    for name, g, s in zip(filenames, *phasors, strict=True):
+        print(f'{name}\tG={g:.4f}\tS={s:.4f}')  # noqa: T201
 
     if convert:
         # save results to files
@@ -291,7 +331,7 @@ def analyze(
         if highlight is None:
             try:
                 highlight = filenames.index(reference)
-            except Exception:
+            except ValueError:
                 highlight = 0
 
         if axes is None:
@@ -312,7 +352,7 @@ def analyze(
             pyplot.show()
 
 
-def askopenfilename(**kwargs):
+def askopenfilename(**kwargs: Any) -> Any:
     """Return file name(s) from Tkinter's file open dialog."""
     from tkinter import Tk, filedialog
 
@@ -324,7 +364,7 @@ def askopenfilename(**kwargs):
     return filenames
 
 
-def main():
+def main() -> None:
     """Command line usage main function."""
     import click
 
@@ -384,16 +424,16 @@ def main():
     )
     @click.argument('files', nargs=-1, type=click.Path())
     def run(  # noqa: PLR0917
-        files,
-        reference,
-        lifetime,
-        frequency,
-        background,
-        startstop,
-        highlight,
-        convert,
-        plot,
-    ):
+        files: Sequence[str],
+        reference: str,
+        lifetime: float,
+        frequency: float | None,
+        background: int,
+        startstop: tuple[int | None, int | None],
+        highlight: int | None,
+        convert: bool,  # noqa: FBT001
+        plot: bool,  # noqa: FBT001
+    ) -> None:
         if not files:
             files = askopenfilename(
                 title='Select SDT files',
@@ -420,6 +460,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
-
-# mypy: allow-untyped-defs, allow-untyped-calls
+    main()
